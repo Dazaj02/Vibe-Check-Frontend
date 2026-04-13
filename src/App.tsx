@@ -38,7 +38,7 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
-  const [showLibrary, setShowLibrary] = useState(false)
+  const [showLibrary, setShowLibrary] = useState(true)
   const [youtubeImportUrl, setYoutubeImportUrl] = useState('')
   const [isImportingYoutube, setIsImportingYoutube] = useState(false)
   const [localPitch, setLocalPitch] = useState(1)
@@ -482,10 +482,23 @@ function App() {
 
     if (audioRef.current) {
       try {
+        // Wait for canplay event before playing
+        const canPlayPromise = new Promise((resolve) => {
+          const handler = () => {
+            audioRef.current?.removeEventListener('canplay', handler)
+            resolve(true)
+          }
+          audioRef.current?.addEventListener('canplay', handler)
+          // Timeout after 5 seconds
+          setTimeout(resolve, 5000)
+        })
+
+        await canPlayPromise
         await audioRef.current.play()
         setMessage('Playback running')
-      } catch {
-        setMessage('Could not play this track. Try another URL or M3U source.')
+      } catch (error) {
+        console.error('Playback error:', error)
+        setMessage(`Could not play: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
     }
     if (!rafRef.current) {
@@ -612,7 +625,7 @@ function App() {
 
   return (
     <>
-      <audio ref={audioRef} crossOrigin="anonymous" style={{ display: 'none' }} />
+      <audio ref={audioRef} style={{ display: 'none' }} />
       <canvas ref={canvasRef} className="visualizer-bg" style={{ pointerEvents: 'none' }} />
       
       {currentPage === 'playlists' ? (
@@ -994,188 +1007,192 @@ function App() {
                <FaTrash /> Clear Selection
              </button>
              </div>
-          </section>
-        </div>
+           </section>
+         </div>
 
-        <section className="panel queue-panel">
-          <h2>Up Next</h2>
-          {queueSongs.length === 0 ? (
-            <p style={{ color: 'var(--muted)', margin: 0, marginTop: '0.5rem' }}>
-              No songs queued. Add more songs or navigate the playlist.
-            </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.5rem' }}>
-               {queueSongs.map((song, index) => (
-                 <div
-                   key={`${song.title}-${index}`}
-                   className="queue-item"
-                   onClick={() => {
-                     // If a playlist is loaded, handle selection locally
-                     if (selectedPlaylist) {
-                       setCurrent(song)
-                       // Auto-play if currently playing
-                       if (isPlaying && audioRef.current) {
-                         setTimeout(() => {
-                           audioRef.current?.play().catch(() => {
-                             setMessage('Could not auto-play next track')
-                           })
-                           // Restart visualizer animation for the new track
-                           if (!rafRef.current) {
-                             animateBackground()
-                           }
-                         }, 100)
-                       }
-                     } else {
-                       // Otherwise use backend endpoint
-                       postState(`/player/select/${encodeURIComponent(song.title)}`)
-                     }
-                   }}
-                 >
-                   <div className="queue-item-text">
-                     <p className="queue-item-title">{index + 1}. {song.title}</p>
-                     <p className="queue-item-artist">{song.artist}</p>
+         <section className="panel queue-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+           {/* Library Section */}
+           <div>
+             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+               <h2>My Library</h2>
+               <button
+                 onClick={() => setShowLibrary(!showLibrary)}
+                 style={{
+                   background: 'transparent',
+                   border: 'none',
+                   color: 'var(--text)',
+                   cursor: 'pointer',
+                   fontSize: '1rem',
+                 }}
+               >
+                 {showLibrary ? <FaTimes /> : <FaMusic />}
+               </button>
+             </div>
+
+             {showLibrary && (
+               <>
+                 {selectedPlaylist && (
+                   <div style={{ marginBottom: '1rem', padding: '0.8rem', background: 'rgba(102, 126, 234, 0.1)', borderRadius: '4px' }}>
+                     <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                       <input
+                         type="text"
+                         placeholder="Paste YouTube URL..."
+                         value={youtubeImportUrl}
+                         onChange={(e) => setYoutubeImportUrl(e.target.value)}
+                         style={{
+                           flex: 1,
+                           padding: '0.5rem',
+                           background: 'rgba(102, 126, 234, 0.1)',
+                           border: '1px solid rgba(102, 126, 234, 0.3)',
+                           borderRadius: '4px',
+                           color: 'var(--text)',
+                           fontSize: '0.85rem',
+                         }}
+                       />
+                       <button
+                         onClick={importYoutubeToPlaylist}
+                         disabled={isImportingYoutube || !youtubeImportUrl.trim()}
+                         style={{
+                           background: isImportingYoutube ? 'rgba(255, 0, 0, 0.3)' : 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
+                           border: 'none',
+                           color: 'white',
+                           padding: '0.5rem 0.8rem',
+                           borderRadius: '4px',
+                           cursor: isImportingYoutube ? 'not-allowed' : 'pointer',
+                           fontSize: '0.85rem',
+                           display: 'flex',
+                           alignItems: 'center',
+                           gap: '0.3rem',
+                         }}
+                       >
+                         <FaYoutube /> {isImportingYoutube ? '...' : 'Import'}
+                       </button>
+                     </div>
                    </div>
-                   <div className="queue-item-duration">{song.duration}</div>
-                 </div>
-               ))}
-            </div>
-           )}
-         </section>
+                 )}
 
-        <section className="panel queue-panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h2>My Library</h2>
-            <button
-              onClick={() => setShowLibrary(!showLibrary)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text)',
-                cursor: 'pointer',
-                fontSize: '1rem',
-              }}
-            >
-              {showLibrary ? <FaTimes /> : <FaMusic />}
-            </button>
-          </div>
+                 {librarySongs.length === 0 ? (
+                   <p style={{ color: 'var(--muted)', margin: 0, marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                     Library is empty. Upload or import songs to get started.
+                   </p>
+                 ) : (
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem', maxHeight: '250px', overflowY: 'auto' }}>
+                     {librarySongs.map((song) => (
+                       <div
+                         key={song.audio_url}
+                         style={{
+                           padding: '0.6rem',
+                           background: 'rgba(30, 30, 50, 0.6)',
+                           borderRadius: '4px',
+                           display: 'flex',
+                           justifyContent: 'space-between',
+                           alignItems: 'center',
+                           gap: '0.5rem',
+                           fontSize: '0.8rem',
+                         }}
+                       >
+                         <div style={{ flex: 1, minWidth: 0 }}>
+                           <div style={{ color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                             {song.title}
+                           </div>
+                           <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
+                             {song.artist}
+                           </div>
+                         </div>
+                         <button
+                           onClick={() => {
+                             setCurrent(song)
+                             if (!isPlaying) {
+                               beginPlayback()
+                             }
+                           }}
+                           title="Play now"
+                           style={{
+                             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                             border: 'none',
+                             color: 'white',
+                             padding: '0.4rem 0.6rem',
+                             borderRadius: '3px',
+                             cursor: 'pointer',
+                             display: 'flex',
+                             alignItems: 'center',
+                             justifyContent: 'center',
+                             fontSize: '0.7rem',
+                           }}
+                         >
+                           <FaPlay size={10} />
+                         </button>
+                         {selectedPlaylist && (
+                           <button
+                             onClick={() => addLibrarySongToPlaylist(song)}
+                             title="Add to current playlist"
+                             style={{
+                               background: 'rgba(76, 175, 80, 0.3)',
+                               border: '1px solid rgba(76, 175, 80, 0.6)',
+                               color: '#4caf50',
+                               padding: '0.4rem 0.6rem',
+                               borderRadius: '3px',
+                               cursor: 'pointer',
+                               fontSize: '0.7rem',
+                             }}
+                           >
+                             <FaPlus size={10} />
+                           </button>
+                         )}
+                       </div>
+                     ))}
+                   </div>
+                 )}
+               </>
+             )}
+           </div>
 
-          {showLibrary && (
-            <>
-              {selectedPlaylist && (
-                <div style={{ marginBottom: '1rem', padding: '0.8rem', background: 'rgba(102, 126, 234, 0.1)', borderRadius: '4px' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <input
-                      type="text"
-                      placeholder="Paste YouTube URL..."
-                      value={youtubeImportUrl}
-                      onChange={(e) => setYoutubeImportUrl(e.target.value)}
-                      style={{
-                        flex: 1,
-                        padding: '0.5rem',
-                        background: 'rgba(102, 126, 234, 0.1)',
-                        border: '1px solid rgba(102, 126, 234, 0.3)',
-                        borderRadius: '4px',
-                        color: 'var(--text)',
-                        fontSize: '0.85rem',
-                      }}
-                    />
-                    <button
-                      onClick={importYoutubeToPlaylist}
-                      disabled={isImportingYoutube || !youtubeImportUrl.trim()}
-                      style={{
-                        background: isImportingYoutube ? 'rgba(255, 0, 0, 0.3)' : 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
-                        border: 'none',
-                        color: 'white',
-                        padding: '0.5rem 0.8rem',
-                        borderRadius: '4px',
-                        cursor: isImportingYoutube ? 'not-allowed' : 'pointer',
-                        fontSize: '0.85rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.3rem',
-                      }}
-                    >
-                      <FaYoutube /> {isImportingYoutube ? '...' : 'Import'}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {librarySongs.length === 0 ? (
-                <p style={{ color: 'var(--muted)', margin: 0, marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                  Library is empty. Upload or import songs to get started.
-                </p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
-                  {librarySongs.map((song) => (
+           {/* Up Next Section */}
+           <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '1rem' }}>
+             <h2>Up Next</h2>
+             {queueSongs.length === 0 ? (
+               <p style={{ color: 'var(--muted)', margin: 0, marginTop: '0.5rem' }}>
+                 No songs queued. Add more songs or navigate the playlist.
+               </p>
+             ) : (
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.5rem' }}>
+                  {queueSongs.map((song, index) => (
                     <div
-                      key={song.audio_url}
-                      style={{
-                        padding: '0.6rem',
-                        background: 'rgba(30, 30, 50, 0.6)',
-                        borderRadius: '4px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        fontSize: '0.8rem',
+                      key={`${song.title}-${index}`}
+                      className="queue-item"
+                      onClick={() => {
+                        // If a playlist is loaded, handle selection locally
+                        if (selectedPlaylist) {
+                          setCurrent(song)
+                          // Auto-play if currently playing
+                          if (isPlaying && audioRef.current) {
+                            setTimeout(() => {
+                              audioRef.current?.play().catch(() => {
+                                setMessage('Could not auto-play next track')
+                              })
+                              // Restart visualizer animation for the new track
+                              if (!rafRef.current) {
+                                animateBackground()
+                              }
+                            }, 100)
+                          }
+                        } else {
+                          // Otherwise use backend endpoint
+                          postState(`/player/select/${encodeURIComponent(song.title)}`)
+                        }
                       }}
                     >
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {song.title}
-                        </div>
-                        <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
-                          {song.artist}
-                        </div>
+                      <div className="queue-item-text">
+                        <p className="queue-item-title">{index + 1}. {song.title}</p>
+                        <p className="queue-item-artist">{song.artist}</p>
                       </div>
-                      <button
-                        onClick={() => {
-                          setCurrent(song)
-                          if (!isPlaying) {
-                            beginPlayback()
-                          }
-                        }}
-                        title="Play now"
-                        style={{
-                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                          border: 'none',
-                          color: 'white',
-                          padding: '0.4rem 0.6rem',
-                          borderRadius: '3px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '0.7rem',
-                        }}
-                      >
-                        <FaPlay size={10} />
-                      </button>
-                      {selectedPlaylist && (
-                        <button
-                          onClick={() => addLibrarySongToPlaylist(song)}
-                          title="Add to current playlist"
-                          style={{
-                            background: 'rgba(76, 175, 80, 0.3)',
-                            border: '1px solid rgba(76, 175, 80, 0.6)',
-                            color: '#4caf50',
-                            padding: '0.4rem 0.6rem',
-                            borderRadius: '3px',
-                            cursor: 'pointer',
-                            fontSize: '0.7rem',
-                          }}
-                        >
-                          <FaPlus size={10} />
-                        </button>
-                      )}
+                      <div className="queue-item-duration">{song.duration}</div>
                     </div>
                   ))}
-                </div>
+               </div>
               )}
-            </>
-          )}
-        </section>
+           </div>
+         </section>
         </div>
 
              <footer className="status">{message}</footer>
