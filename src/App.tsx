@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { PlaylistsPage } from './PlaylistsPage'
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaArrowRight } from 'react-icons/fa'
 
 type Song = {
   title: string
@@ -29,6 +31,7 @@ const toPlayableUrl = (audioUrl: string) => {
 }
 
 function App() {
+  const [currentPage, setCurrentPage] = useState<'player' | 'playlists'>('player')
   const [playlist, setPlaylist] = useState<Song[]>([])
   const [current, setCurrent] = useState<Song | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -36,7 +39,6 @@ function App() {
   const [duration, setDuration] = useState(0)
   const [localPitch, setLocalPitch] = useState(1)
   const [volume, setVolume] = useState(1)
-  const [isVisualizerActive, setIsVisualizerActive] = useState(false)
   const [isDraggingProgress, setIsDraggingProgress] = useState(false)
   const [message, setMessage] = useState('Ready')
   const [localFiles, setLocalFiles] = useState<File[]>([])
@@ -130,7 +132,6 @@ function App() {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
-    setIsVisualizerActive(false)
     
     // Draw static background
     const canvas = canvasRef.current
@@ -138,16 +139,18 @@ function App() {
     if (!canvas || !ctx) return
     
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    const width = window.innerWidth + (window.innerWidth - document.documentElement.clientWidth)
-    const height = window.innerHeight
-    canvas.width = Math.floor(width * dpr)
-    canvas.height = Math.floor(height * dpr)
-    canvas.style.width = `${width}px`
-    canvas.style.height = `${height}px`
+    // Use client dimensions to fill the entire visual viewport
+    const visualWidth = document.documentElement.clientWidth + (window.innerWidth - document.documentElement.clientWidth)
+    const visualHeight = window.innerHeight
+    
+    canvas.width = Math.floor(visualWidth * dpr)
+    canvas.height = Math.floor(visualHeight * dpr)
+    canvas.style.width = `${visualWidth}px`
+    canvas.style.height = `${visualHeight}px`
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     
     // Static gradient (initial state)
-    const gradient = ctx.createLinearGradient(0, 0, width, height)
+    const gradient = ctx.createLinearGradient(0, 0, visualWidth, visualHeight)
     gradient.addColorStop(0, '#0a0e27')
     gradient.addColorStop(0.25, '#1a0033')
     gradient.addColorStop(0.5, '#1a0a40')
@@ -155,7 +158,7 @@ function App() {
     gradient.addColorStop(1, '#0a0e27')
     
     ctx.fillStyle = gradient
-    ctx.fillRect(0, 0, width, height)
+    ctx.fillRect(0, 0, visualWidth, visualHeight)
   }
 
   const animateBackground = () => {
@@ -171,12 +174,14 @@ function App() {
     }
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    const width = window.innerWidth + (window.innerWidth - document.documentElement.clientWidth)
-    const height = window.innerHeight
-    canvas.width = Math.floor(width * dpr)
-    canvas.height = Math.floor(height * dpr)
-    canvas.style.width = `${width}px`
-    canvas.style.height = `${height}px`
+    // Use client dimensions plus scrollbar width to fill entire visual area
+    const visualWidth = document.documentElement.clientWidth + (window.innerWidth - document.documentElement.clientWidth)
+    const visualHeight = window.innerHeight
+    
+    canvas.width = Math.floor(visualWidth * dpr)
+    canvas.height = Math.floor(visualHeight * dpr)
+    canvas.style.width = `${visualWidth}px`
+    canvas.style.height = `${visualHeight}px`
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
     const bufferLength = analyser.frequencyBinCount
@@ -191,12 +196,12 @@ function App() {
 
       // Multicolor gradient background based on audio
       const gradient = ctx.createRadialGradient(
-        width * 0.5,
-        height * 0.55,
+        visualWidth * 0.5,
+        visualHeight * 0.55,
         20,
-        width * 0.5,
-        height * 0.55,
-        Math.max(width, height) * 0.75,
+        visualWidth * 0.5,
+        visualHeight * 0.55,
+        Math.max(visualWidth, visualHeight) * 0.75,
       )
       
       // Dynamic colors based on average frequency and volume
@@ -207,23 +212,27 @@ function App() {
       gradient.addColorStop(1, 'rgba(2, 6, 23, 0.92)')
 
       ctx.fillStyle = gradient
-      ctx.fillRect(0, 0, width, height)
+      ctx.fillRect(0, 0, visualWidth, visualHeight)
 
-      // Calculate bar count based on screen width - 1 bar per 2 pixels for dense coverage
-      const barCount = Math.ceil(width / 2)
-      const barWidth = width / barCount
+      // Use all frequency data for maximum reactivity
+      const barCount = bufferLength
+      const barWidth = visualWidth / barCount
+      
       for (let i = 0; i < barCount; i += 1) {
-        const index = Math.floor((i / barCount) * bufferLength)
-        const value = dataArray[index]
-        const barHeight = (value / 255) * height * 0.48
+        const dataIndex = i
+        const barPosition = i * barWidth
         
-        // Multicolor bars based on frequency and position
-        const hue = (hueShift + (i / barCount) * 360) % 360
+        const value = dataArray[dataIndex]
+        const barHeight = (value / 255) * visualHeight * 0.6
+        
+        // Continuous color gradient based on position (hue wave)
+        const hueOffset = (i / barCount) * 360
+        const hue = (hueShift + hueOffset) % 360
         const saturation = 100 - (20 * Math.sin((i / barCount) * Math.PI))
         const volumeModifier = 0.3 + (volumeRef.current * 0.4)
         
         ctx.fillStyle = `hsla(${hue}, ${saturation}%, ${55 + value / 255 * 15}%, ${volumeModifier + value / 300})`
-        ctx.fillRect(i * barWidth, height - barHeight, barWidth, barHeight)
+        ctx.fillRect(barPosition, visualHeight - barHeight, barWidth, barHeight)
       }
 
       rafRef.current = requestAnimationFrame(draw)
@@ -242,7 +251,6 @@ function App() {
       try {
         await audioRef.current.play()
         setMessage('Playback running')
-        setIsVisualizerActive(true)
       } catch {
         setMessage('Could not play this track. Try another URL or M3U source.')
       }
@@ -369,16 +377,25 @@ function App() {
   }, [])
 
   return (
-    <div className="page">
-      <canvas ref={canvasRef} className="visualizer-bg" />
-      <audio ref={audioRef} crossOrigin="anonymous" />
+    <>
+      {currentPage === 'playlists' ? (
+        <PlaylistsPage onNavigateBack={() => setCurrentPage('player')} />
+      ) : (
+        <div className="page">
+          <canvas ref={canvasRef} className="visualizer-bg" />
+          <audio ref={audioRef} crossOrigin="anonymous" />
 
-      <main className="shell">
-        <header className="hero">
-          <h1>Vibe Check</h1>
-        </header>
+          <main className="shell">
+            <header className="hero">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h1>Vibe Check</h1>
+                <button onClick={() => setCurrentPage('playlists')} style={{ marginTop: 0 }}>
+                  <FaList /> My Playlists
+                </button>
+              </div>
+            </header>
 
-        <div className="columns-container">
+            <div className="columns-container">
         <section className="panel current-panel">
           <h2>Now Playing</h2>
           <p className="title">{current ? `${current.title} - ${current.artist}` : 'No track selected'}</p>
@@ -459,9 +476,9 @@ function App() {
           </div>
 
           <div className="row">
-            <button onClick={() => postState('/player/previous')}>⏮ Previous</button>
-            <button onClick={togglePlayPause}>{isPlaying ? '⏸ Pause' : '▶ Play'}</button>
-            <button onClick={() => postState('/player/next')}>Next ⏭</button>
+            <button onClick={() => postState('/player/previous')}><FaStepBackward /> Previous</button>
+            <button onClick={togglePlayPause}>{isPlaying ? <><FaPause /> Pause</> : <><FaPlay /> Play</>}</button>
+            <button onClick={() => postState('/player/next')}>Next <FaStepForward /></button>
           </div>
 
           <div className="pitch-slider-container">
@@ -540,10 +557,10 @@ function App() {
                 }
               }}
             >
-              ⬇ Download Current
+              <FaDownload /> Download Current
             </button>
-            <button onClick={() => postState('/playlist/sort', { by: 'title' })}>Sort by Title</button>
-            <button onClick={() => postState('/playlist/sort', { by: 'artist' })}>Sort by Artist</button>
+            <button onClick={() => postState('/playlist/sort', { by: 'title' })}><FaSort /> Sort by Title</button>
+            <button onClick={() => postState('/playlist/sort', { by: 'artist' })}><FaSort /> Sort by Artist</button>
           </div>
         </section>
 
@@ -560,12 +577,12 @@ function App() {
                   </small>
                 </div>
                 <div className="row compact">
-                  <button onClick={() => postState(`/player/select/${encodeURIComponent(song.title)}`)}>Go</button>
+                  <button onClick={() => postState(`/player/select/${encodeURIComponent(song.title)}`)}><FaArrowRight /> Go</button>
                   <button
                     className="danger"
                     onClick={() => postState(`/playlist/${encodeURIComponent(song.title)}`, undefined, 'DELETE')}
                   >
-                    Remove
+                    <FaTrash /> Remove
                   </button>
                 </div>
               </li>
@@ -621,7 +638,7 @@ function App() {
             onClick={() => document.getElementById('file-input')?.click()}
             style={{ width: '100%', marginTop: '1rem' }}
           >
-            📁 Browse Files
+            <FaPlus /> Browse Files
           </button>
 
           {localFiles.length > 0 && (
@@ -645,7 +662,7 @@ function App() {
                       className="danger"
                       style={{ padding: '0.3rem 0.6rem', fontSize: '0.85rem' }}
                     >
-                      Remove
+                      <FaTrash />
                     </button>
                   </li>
                 ))}
@@ -671,27 +688,19 @@ function App() {
                   const response = await fetch(`${API_BASE}/playlist/upload-local`, {
                     method: 'POST',
                     body: formData,
-                    // Don't set Content-Type header - browser will set it automatically with boundary
                   })
 
                   if (!response.ok) {
-                    let errorMessage = 'Upload failed.'
-                    try {
-                      const error = await response.json()
-                      errorMessage = error.detail || errorMessage
-                    } catch {
-                      errorMessage = `HTTP ${response.status}: ${response.statusText}`
-                    }
-                    setMessage(errorMessage)
+                    const error = await response.json()
+                    setMessage(error.detail || 'Upload failed')
                     return
                   }
 
                   const data = (await response.json()) as PlaylistState
                   setPlaylist(data.songs)
                   setCurrent(data.current)
-                  const uploadedCount = localFiles.length
                   setLocalFiles([])
-                  setMessage(`Successfully uploaded ${uploadedCount} file(s).`)
+                  setMessage(`Successfully uploaded ${localFiles.length} file(s)`)
                 } catch (error) {
                   const errorMsg = error instanceof Error ? error.message : String(error)
                   setMessage(`Upload error: ${errorMsg}`)
@@ -699,7 +708,13 @@ function App() {
               }}
               disabled={localFiles.length === 0}
             >
-              ⬆ Upload to Playlist
+              <FaPlus /> Upload to Playlist
+            </button>
+            <button
+              onClick={() => setLocalFiles([])}
+              disabled={localFiles.length === 0}
+            >
+              <FaTrash /> Clear Selection
             </button>
             <button
               onClick={() => setLocalFiles([])}
@@ -737,9 +752,11 @@ function App() {
         </section>
         </div>
 
-        <footer className="status">{message}</footer>
-      </main>
-    </div>
+            <footer className="status">{message}</footer>
+          </main>
+        </div>
+      )}
+    </>
   )
 }
 
