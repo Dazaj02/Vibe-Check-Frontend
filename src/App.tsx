@@ -825,70 +825,68 @@ function App() {
             </div>
           )}
 
-           <div className="row" style={{ marginTop: '1rem' }}>
-             <button
-               onClick={async () => {
-                 if (localFiles.length === 0) {
-                   setMessage('No files selected to upload.')
-                   return
-                 }
+            <div className="row" style={{ marginTop: '1rem' }}>
+              <button
+                onClick={async () => {
+                  if (localFiles.length === 0) {
+                    setMessage('No files selected to upload.')
+                    return
+                  }
 
-                 if (!selectedPlaylist) {
-                   setMessage('Please load a playlist first')
-                   return
-                 }
+                  try {
+                    setMessage('Uploading files...')
+                    const formData = new FormData()
+                    localFiles.forEach((file) => {
+                      formData.append('files', file)
+                    })
 
-                 try {
-                   setMessage('Uploading files...')
-                   const formData = new FormData()
-                   localFiles.forEach((file) => {
-                     formData.append('files', file)
-                   })
+                    const response = await fetch(`${API_BASE}/playlist/upload-local`, {
+                      method: 'POST',
+                      body: formData,
+                    })
 
-                   const response = await fetch(`${API_BASE}/playlist/upload-local`, {
-                     method: 'POST',
-                     body: formData,
-                   })
+                    if (!response.ok) {
+                      const error = await response.json()
+                      setMessage(error.detail || 'Upload failed')
+                      return
+                    }
 
-                   if (!response.ok) {
-                     const error = await response.json()
-                     setMessage(error.detail || 'Upload failed')
-                     return
-                   }
-
-                   const data = await response.json() as { songs: Song[]; songs_added: number }
-                   
-                   // Add uploaded songs to the current playlist
-                   if (data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
-                     for (const song of data.songs) {
-                       await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/add-song`, {
-                         method: 'POST',
-                         headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify(song)
-                       })
-                     }
-                     // Refresh playlist
-                     const refreshResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
-                     if (refreshResponse.ok) {
-                       const playlistData = await refreshResponse.json() as { songs: Song[] }
-                       setPlaylist(playlistData.songs)
-                       if (playlistData.songs.length > 0 && !current) {
-                         setCurrent(playlistData.songs[0])
-                       }
-                     }
-                   }
-                   
-                   setLocalFiles([])
-                   setMessage(`Successfully uploaded ${data.songs_added} file(s)`)
-                 } catch (error) {
-                   const errorMsg = error instanceof Error ? error.message : String(error)
-                   setMessage(`Upload error: ${errorMsg}`)
-                 }
-               }}
-               disabled={localFiles.length === 0}
-             >
-               <FaPlus /> Upload to Playlist
-             </button>
+                    const data = await response.json() as { songs: Song[]; songs_added: number }
+                    
+                    // Add uploaded songs to the current playlist (if one is selected)
+                    if (selectedPlaylist && data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
+                      for (const song of data.songs) {
+                        await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/add-song`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(song)
+                        })
+                      }
+                      // Refresh playlist
+                      const refreshResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
+                      if (refreshResponse.ok) {
+                        const playlistData = await refreshResponse.json() as { songs: Song[] }
+                        setPlaylist(playlistData.songs)
+                        if (playlistData.songs.length > 0 && !current) {
+                          setCurrent(playlistData.songs[0])
+                        }
+                      }
+                      setLocalFiles([])
+                      setMessage(`Successfully uploaded ${data.songs_added} file(s) to playlist`)
+                    } else {
+                      // If no playlist selected, just clear the files and show success
+                      setLocalFiles([])
+                      setMessage(`Successfully uploaded ${data.songs_added} file(s) to library`)
+                    }
+                  } catch (error) {
+                    const errorMsg = error instanceof Error ? error.message : String(error)
+                    setMessage(`Upload error: ${errorMsg}`)
+                  }
+                }}
+                disabled={localFiles.length === 0}
+              >
+                <FaPlus /> Upload Music
+              </button>
              <button
                onClick={() => setLocalFiles([])}
                disabled={localFiles.length === 0}
