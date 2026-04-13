@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PlaylistsPage } from './PlaylistsPage'
-import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaArrowRight } from 'react-icons/fa'
+import { LibraryPage } from './LibraryPage'
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaArrowRight, FaCompactDisc } from 'react-icons/fa'
 
 type Song = {
   title: string
@@ -31,7 +32,7 @@ const toPlayableUrl = (audioUrl: string) => {
 }
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<'player' | 'playlists'>('player')
+  const [currentPage, setCurrentPage] = useState<'player' | 'playlists' | 'library'>('player')
   const [playlist, setPlaylist] = useState<Song[]>([])
   const [current, setCurrent] = useState<Song | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -515,7 +516,15 @@ function App() {
       <audio ref={audioRef} crossOrigin="anonymous" style={{ display: 'none' }} />
       <canvas ref={canvasRef} className="visualizer-bg" style={{ pointerEvents: 'none' }} />
       
-      {currentPage === 'playlists' ? (
+      {currentPage === 'library' ? (
+        <LibraryPage 
+          onNavigateBack={() => setCurrentPage('player')}
+          onSongSelect={(song) => {
+            setCurrent(song)
+            setCurrentPage('player')
+          }}
+        />
+      ) : currentPage === 'playlists' ? (
         <PlaylistsPage 
           onNavigateBack={() => setCurrentPage('player')}
           onPlaylistSelect={loadSelectedPlaylist}
@@ -526,9 +535,14 @@ function App() {
             <header className="hero">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h1>Vibe Check</h1>
-                <button onClick={() => setCurrentPage('playlists')} style={{ marginTop: 0 }}>
-                  <FaList /> My Playlists
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button onClick={() => setCurrentPage('library')} style={{ marginTop: 0 }}>
+                    <FaCompactDisc /> My Library
+                  </button>
+                  <button onClick={() => setCurrentPage('playlists')} style={{ marginTop: 0 }}>
+                    <FaList /> My Playlists
+                  </button>
+                </div>
               </div>
             </header>
 
