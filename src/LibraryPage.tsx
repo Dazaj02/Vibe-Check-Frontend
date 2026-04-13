@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FaArrowLeft, FaTrash, FaMusic, FaPlay } from 'react-icons/fa'
+import { FaArrowLeft, FaTrash, FaMusic, FaPlay, FaYoutube, FaDownload } from 'react-icons/fa'
 
 type Song = {
   title: string
@@ -23,6 +23,8 @@ export function LibraryPage({
   const [message, setMessage] = useState('')
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set())
   const [selectedPlaylist, setSelectedPlaylist] = useState<string>('')
+  const [youtubePlaylistUrl, setYoutubePlaylistUrl] = useState('')
+  const [isImporting, setIsImporting] = useState(false)
 
   useEffect(() => {
     loadLibrary()
@@ -154,12 +156,45 @@ export function LibraryPage({
       }
     }
 
-    setMessage(`Deleted ${deletedCount} song(s) from library`)
-    setSelectedSongs(new Set())
-    await loadLibrary()
-  }
+     setMessage(`Deleted ${deletedCount} song(s) from library`)
+     setSelectedSongs(new Set())
+     await loadLibrary()
+   }
 
-  return (
+   const importFromYoutube = async () => {
+     if (!youtubePlaylistUrl.trim()) {
+       setMessage('Please enter a YouTube URL')
+       return
+     }
+
+     setIsImporting(true)
+     try {
+       const response = await fetch(`${API_BASE}/library/import-youtube`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ youtube_url: youtubePlaylistUrl }),
+       })
+
+       if (!response.ok) {
+         const error = await response.json()
+         setMessage(`Error: ${error.detail || 'Import failed'}`)
+         setIsImporting(false)
+         return
+       }
+
+       const data = await response.json()
+       setMessage(`Successfully imported ${data.songs_added} song(s) from YouTube!`)
+       setYoutubePlaylistUrl('')
+       await loadLibrary()
+     } catch (error) {
+       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+       setMessage(`Error: ${errorMsg}`)
+     } finally {
+       setIsImporting(false)
+     }
+   }
+
+   return (
     <div className="page">
       <canvas className="visualizer-bg" />
 
@@ -199,10 +234,57 @@ export function LibraryPage({
         )}
 
         {librarySongs.length === 0 ? (
-          <section style={{ background: 'rgba(30, 30, 50, 0.8)', borderRadius: '12px', padding: '2rem', textAlign: 'center' }}>
-            <FaMusic size={48} style={{ color: 'var(--muted)', marginBottom: '1rem' }} />
-            <p style={{ color: 'var(--muted)' }}>Your library is empty. Start by uploading some music files!</p>
-          </section>
+          <>
+            <section style={{ background: 'rgba(30, 30, 50, 0.8)', borderRadius: '12px', padding: '2rem', textAlign: 'center', marginBottom: '2rem' }}>
+              <FaMusic size={48} style={{ color: 'var(--muted)', marginBottom: '1rem' }} />
+              <p style={{ color: 'var(--muted)' }}>Your library is empty. Start by uploading some music files or importing from YouTube!</p>
+            </section>
+
+            <section style={{ background: 'rgba(30, 30, 50, 0.8)', borderRadius: '12px', padding: '2rem', marginBottom: '2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1rem' }}>
+                <FaYoutube size={24} style={{ color: '#ff0000' }} />
+                <h2 style={{ margin: 0 }}>Import from YouTube</h2>
+              </div>
+              <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  placeholder="Paste YouTube Playlist or Video URL..."
+                  value={youtubePlaylistUrl}
+                  onChange={(e) => setYoutubePlaylistUrl(e.target.value)}
+                  style={{
+                    flex: 1,
+                    minWidth: '250px',
+                    padding: '0.8rem',
+                    background: 'rgba(102, 126, 234, 0.1)',
+                    border: '1px solid rgba(102, 126, 234, 0.3)',
+                    borderRadius: '4px',
+                    color: 'var(--text)',
+                  }}
+                />
+                <button
+                  onClick={importFromYoutube}
+                  disabled={isImporting || !youtubePlaylistUrl.trim()}
+                  style={{
+                    background: isImporting || !youtubePlaylistUrl.trim() ? 'rgba(255, 0, 0, 0.3)' : 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
+                    border: 'none',
+                    color: 'white',
+                    padding: '0.8rem 1.5rem',
+                    borderRadius: '4px',
+                    cursor: isImporting || !youtubePlaylistUrl.trim() ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    opacity: isImporting || !youtubePlaylistUrl.trim() ? 0.6 : 1,
+                  }}
+                >
+                  <FaDownload /> {isImporting ? 'Importing...' : 'Import'}
+                </button>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '0.8rem' }}>
+                Supports YouTube playlists, YouTube Music playlists, and individual videos. Songs will be added to your library.
+              </p>
+            </section>
+          </>
         ) : (
           <>
             {selectedSongs.size > 0 && (
@@ -385,15 +467,60 @@ export function LibraryPage({
                       justifyContent: 'center',
                       gap: '0.4rem',
                     }}
-                  >
-                    <FaTrash size={12} /> Delete
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </main>
-    </div>
-  )
-}
+                   >
+                     <FaTrash size={12} /> Delete
+                   </button>
+                 </div>
+               ))}
+             </div>
+
+            <section style={{ background: 'rgba(30, 30, 50, 0.8)', borderRadius: '12px', padding: '2rem', marginTop: '2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1rem' }}>
+                <FaYoutube size={24} style={{ color: '#ff0000' }} />
+                <h2 style={{ margin: 0 }}>Import More from YouTube</h2>
+              </div>
+              <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  placeholder="Paste YouTube Playlist or Video URL..."
+                  value={youtubePlaylistUrl}
+                  onChange={(e) => setYoutubePlaylistUrl(e.target.value)}
+                  style={{
+                    flex: 1,
+                    minWidth: '250px',
+                    padding: '0.8rem',
+                    background: 'rgba(102, 126, 234, 0.1)',
+                    border: '1px solid rgba(102, 126, 234, 0.3)',
+                    borderRadius: '4px',
+                    color: 'var(--text)',
+                  }}
+                />
+                <button
+                  onClick={importFromYoutube}
+                  disabled={isImporting || !youtubePlaylistUrl.trim()}
+                  style={{
+                    background: isImporting || !youtubePlaylistUrl.trim() ? 'rgba(255, 0, 0, 0.3)' : 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
+                    border: 'none',
+                    color: 'white',
+                    padding: '0.8rem 1.5rem',
+                    borderRadius: '4px',
+                    cursor: isImporting || !youtubePlaylistUrl.trim() ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    opacity: isImporting || !youtubePlaylistUrl.trim() ? 0.6 : 1,
+                  }}
+                >
+                  <FaDownload /> {isImporting ? 'Importing...' : 'Import'}
+                </button>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '0.8rem' }}>
+                Add more songs to your library from YouTube playlists, YouTube Music, or individual videos.
+              </p>
+            </section>
+           </>
+         )}
+       </main>
+     </div>
+   )
+ }
