@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PlaylistsPage } from './PlaylistsPage'
-import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaArrowRight, FaMusic, FaYoutube, FaTimes } from 'react-icons/fa'
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaMusic, FaYoutube, FaTimes } from 'react-icons/fa'
 
 type Song = {
   title: string
@@ -216,6 +216,72 @@ function App() {
       setMessage(`Error: ${errorMsg}`)
     } finally {
       setIsImportingYoutube(false)
+    }
+  }
+
+  const removeSongFromPlaylist = async (songTitle: string) => {
+    if (!selectedPlaylist) {
+      setMessage('No playlist selected')
+      return
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/songs/${encodeURIComponent(songTitle)}`,
+        { method: 'DELETE' }
+      )
+
+      if (!response.ok) {
+        const error = await response.json()
+        setMessage(`Error: ${error.detail || 'Failed to remove song'}`)
+        return
+      }
+
+      // Refresh playlist
+      const playlistResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
+      if (playlistResponse.ok) {
+        const playlistData = await playlistResponse.json() as { songs: Song[] }
+        setPlaylist(playlistData.songs)
+        // If removed song was current, move to next
+        if (current?.title === songTitle && playlistData.songs.length > 0) {
+          setCurrent(playlistData.songs[0])
+        }
+      }
+      setMessage(`Removed: ${songTitle}`)
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      setMessage(`Error: ${errorMsg}`)
+    }
+  }
+
+  const moveSongInPlaylist = async (fromIndex: number, toIndex: number) => {
+    if (!selectedPlaylist) {
+      setMessage('No playlist selected')
+      return
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/move-song`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fromIndex, toIndex }),
+        }
+      )
+
+      if (!response.ok) {
+        const error = await response.json()
+        setMessage(`Error: ${error.detail || 'Failed to move song'}`)
+        return
+      }
+
+      const data = await response.json() as { songs: Song[] }
+      setPlaylist(data.songs)
+      setMessage('Song moved')
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      setMessage(`Error: ${errorMsg}`)
     }
   }
 
@@ -834,24 +900,69 @@ function App() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         <section className="panel list-panel">
-          <h2>Playlist</h2>
+          <h2>Playlist ({playlist.length})</h2>
           <ul>
-            {playlist.map((song) => (
-              <li key={`${song.title}-${song.artist}`} className={song.title === current?.title ? 'active' : ''}>
-                <div>
-                  <strong>{song.title}</strong>
+            {playlist.map((song, index) => (
+              <li key={`${song.title}-${song.artist}-${index}`} className={song.title === current?.title ? 'active' : ''} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.8rem', gap: '0.5rem' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <strong>{index + 1}. {song.title}</strong>
                   <small>
                     {song.artist} | {song.duration} | x{song.pitch.toFixed(2)}
                   </small>
                 </div>
-                <div className="row compact">
-                  <button onClick={() => postState(`/player/select/${encodeURIComponent(song.title)}`)}><FaArrowRight /> Go</button>
+                <div className="row compact" style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
+                  {selectedPlaylist && index > 0 && (
+                    <button
+                      onClick={() => moveSongInPlaylist(index, index - 1)}
+                      title="Move up"
+                      style={{
+                        padding: '0.4rem 0.6rem',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      ↑
+                    </button>
+                  )}
+                  {selectedPlaylist && index < playlist.length - 1 && (
+                    <button
+                      onClick={() => moveSongInPlaylist(index, index + 1)}
+                      title="Move down"
+                      style={{
+                        padding: '0.4rem 0.6rem',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      ↓
+                    </button>
+                  )}
                   <button
-                    className="danger"
-                    onClick={() => selectedPlaylist && postState(`/playlists/${encodeURIComponent(selectedPlaylist)}/songs/${encodeURIComponent(song.title)}`, undefined, 'DELETE')}
+                    onClick={() => {
+                      setCurrent(song)
+                      if (!isPlaying) {
+                        beginPlayback()
+                      }
+                    }}
+                    title="Play"
+                    style={{
+                      padding: '0.4rem 0.6rem',
+                      fontSize: '0.85rem',
+                    }}
                   >
-                    <FaTrash /> Remove
+                    <FaPlay /> Play
                   </button>
+                  {selectedPlaylist && (
+                    <button
+                      className="danger"
+                      onClick={() => removeSongFromPlaylist(song.title)}
+                      title="Remove from playlist"
+                      style={{
+                        padding: '0.4rem 0.6rem',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      <FaTrash />
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
