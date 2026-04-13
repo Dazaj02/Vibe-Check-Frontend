@@ -43,6 +43,8 @@ function App() {
   const [message, setMessage] = useState('Ready')
   const [localFiles, setLocalFiles] = useState<File[]>([])
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null)
+  const [previousState, setPreviousState] = useState<{ playlist: Song[]; current: Song | null } | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -58,12 +60,6 @@ function App() {
     [playlist, current],
   )
 
-  const previousTitle = currentIndex > 0 ? playlist[currentIndex - 1]?.title : '[Head]'
-  const nextTitle =
-    currentIndex >= 0 && currentIndex < playlist.length - 1
-      ? playlist[currentIndex + 1]?.title
-      : '[Tail]'
-
   // Get upcoming songs for the queue (next 5 songs)
   const queueSongs = useMemo(() => {
     if (currentIndex < 0 || currentIndex >= playlist.length) return []
@@ -72,40 +68,178 @@ function App() {
   }, [playlist, currentIndex])
 
   const refreshState = async () => {
-    const response = await fetch(`${API_BASE}/playlist`)
-    const data = (await response.json()) as PlaylistState
-    setPlaylist(data.songs)
-    setCurrent(data.current)
+    try {
+      const response = await fetch(`${API_BASE}/playlist`)
+      if (!response.ok) throw new Error('Failed to fetch playlist')
+      const data = (await response.json()) as PlaylistState
+      if (!Array.isArray(data.songs)) throw new Error('Invalid response format')
+      setPlaylist(data.songs)
+      setCurrent(data.current || null)
+    } catch (error) {
+      console.error('Error refreshing state:', error)
+      setMessage('Failed to refresh playlist')
+    }
+  }
+
+  const loadSelectedPlaylist = async (playlistName: string) => {
+    try {
+      // Guardar el estado actual antes de cargar la playlist
+      setPreviousState({ playlist, current })
+      
+      const response = await fetch(`${API_BASE}/playlists/${encodeURIComponent(playlistName)}`)
+      if (!response.ok) {
+        setMessage('Failed to load playlist')
+        return
+      }
+      const playlistData = await response.json() as { name: string; songs: Song[]; total: number }
+      if (!Array.isArray(playlistData.songs)) {
+        setMessage('Invalid playlist data')
+        return
+      }
+      setPlaylist(playlistData.songs)
+      setSelectedPlaylist(playlistName)
+      setCurrent(playlistData.songs[0] || null)
+      setMessage(`Loaded playlist: ${playlistName}`)
+      
+      // Cambiar al player automáticamente
+      setCurrentPage('player')
+    } catch (error) {
+      console.error('Error loading playlist:', error)
+      setMessage('Error loading playlist')
+    }
+  }
+
+  const closePlaylist = () => {
+    // Restaurar el estado anterior
+    if (previousState) {
+      setPlaylist(previousState.playlist)
+      setCurrent(previousState.current)
+      setPreviousState(null)
+    }
+    setSelectedPlaylist(null)
+    setMessage('Playlist closed')
+  }
+
+  const playNext = () => {
+    if (selectedPlaylist) {
+      // If a playlist is loaded, navigate locally
+      if (currentIndex < playlist.length - 1) {
+        const nextSong = playlist[currentIndex + 1]
+        setCurrent(nextSong)
+        if (isPlaying && audioRef.current) {
+          setTimeout(() => {
+            audioRef.current?.play().catch(() => {
+              setMessage('Could not auto-play next track')
+            })
+            if (!rafRef.current) {
+              animateBackground()
+            }
+          }, 100)
+        }
+      } else {
+        // Wrap around to beginning
+        if (playlist.length > 0) {
+          setCurrent(playlist[0])
+          if (isPlaying && audioRef.current) {
+            setTimeout(() => {
+              audioRef.current?.play().catch(() => {
+                setMessage('Could not auto-play next track')
+              })
+              if (!rafRef.current) {
+                animateBackground()
+              }
+            }, 100)
+          }
+        }
+      }
+    } else {
+      // Use backend endpoint
+      postState('/player/next')
+    }
+  }
+
+  const playPrevious = () => {
+    if (selectedPlaylist) {
+      // If a playlist is loaded, navigate locally
+      if (currentIndex > 0) {
+        const previousSong = playlist[currentIndex - 1]
+        setCurrent(previousSong)
+        if (isPlaying && audioRef.current) {
+          setTimeout(() => {
+            audioRef.current?.play().catch(() => {
+              setMessage('Could not auto-play previous track')
+            })
+            if (!rafRef.current) {
+              animateBackground()
+            }
+          }, 100)
+        }
+      } else {
+        // Wrap around to end
+        if (playlist.length > 0) {
+          setCurrent(playlist[playlist.length - 1])
+          if (isPlaying && audioRef.current) {
+            setTimeout(() => {
+              audioRef.current?.play().catch(() => {
+                setMessage('Could not auto-play previous track')
+              })
+              if (!rafRef.current) {
+                animateBackground()
+              }
+            }, 100)
+          }
+        }
+      }
+    } else {
+      // Use backend endpoint
+      postState('/player/previous')
+    }
   }
 
   const postState = async (path: string, body?: unknown, method = 'POST') => {
-    const response = await fetch(`${API_BASE}${path}`, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
-    })
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      })
 
-    if (!response.ok) {
-      const error = await response.json()
-      setMessage(error.detail || 'Request failed')
-      return
-    }
+      if (!response.ok) {
+        const error = await response.json() as { detail?: string }
+        setMessage(error.detail || 'Request failed')
+        return
+      }
 
-    const data = (await response.json()) as PlaylistState
-    setPlaylist(data.songs)
-    setCurrent(data.current)
-    
-    // Auto-play the new song if we were already playing
-    if (data.current && isPlaying && audioRef.current) {
-      setTimeout(() => {
-        audioRef.current?.play().catch(() => {
-          setMessage('Could not auto-play next track')
-        })
-        // Restart visualizer animation for the new track
-        if (!rafRef.current) {
-          animateBackground()
+      const data = (await response.json()) as unknown
+      
+      // Handle different response types
+      if (typeof data === 'object' && data !== null) {
+        const objData = data as Record<string, unknown>
+        if ('songs' in objData && 'current' in objData) {
+          // PlaylistState response
+          setPlaylist(Array.isArray(objData.songs) ? (objData.songs as Song[]) : [])
+          setCurrent(objData.current as Song | null || null)
         }
-      }, 100)
+        if ('message' in objData) {
+          setMessage(String(objData.message))
+        }
+      }
+      
+      // Auto-play the new song if we were already playing
+      if (current && isPlaying && audioRef.current) {
+        setTimeout(() => {
+          audioRef.current?.play().catch(() => {
+            setMessage('Could not auto-play next track')
+          })
+          // Restart visualizer animation for the new track
+          if (!rafRef.current) {
+            animateBackground()
+          }
+        }, 100)
+      }
+    } catch (error) {
+      console.error('Error posting state:', error)
+      setMessage('Network error')
     }
   }
 
@@ -139,8 +273,8 @@ function App() {
     if (!canvas || !ctx) return
     
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    // Use client dimensions to fill the entire visual viewport
-    const visualWidth = document.documentElement.clientWidth + (window.innerWidth - document.documentElement.clientWidth)
+    // window.innerWidth includes the scrollbar, which is what we need
+    const visualWidth = window.innerWidth
     const visualHeight = window.innerHeight
     
     canvas.width = Math.floor(visualWidth * dpr)
@@ -174,8 +308,8 @@ function App() {
     }
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    // Use client dimensions plus scrollbar width to fill entire visual area
-    const visualWidth = document.documentElement.clientWidth + (window.innerWidth - document.documentElement.clientWidth)
+    // window.innerWidth includes the scrollbar, which is what we need
+    const visualWidth = window.innerWidth
     const visualHeight = window.innerHeight
     
     canvas.width = Math.floor(visualWidth * dpr)
@@ -378,13 +512,16 @@ function App() {
 
   return (
     <>
+      <audio ref={audioRef} crossOrigin="anonymous" style={{ display: 'none' }} />
+      <canvas ref={canvasRef} className="visualizer-bg" style={{ pointerEvents: 'none' }} />
+      
       {currentPage === 'playlists' ? (
-        <PlaylistsPage onNavigateBack={() => setCurrentPage('player')} />
+        <PlaylistsPage 
+          onNavigateBack={() => setCurrentPage('player')}
+          onPlaylistSelect={loadSelectedPlaylist}
+        />
       ) : (
         <div className="page">
-          <canvas ref={canvasRef} className="visualizer-bg" />
-          <audio ref={audioRef} crossOrigin="anonymous" />
-
           <main className="shell">
             <header className="hero">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -397,12 +534,24 @@ function App() {
 
             <div className="columns-container">
         <section className="panel current-panel">
-          <h2>Now Playing</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2>{selectedPlaylist ? `🎵 ${selectedPlaylist}` : 'Now Playing'}</h2>
+            {selectedPlaylist && (
+              <button 
+                onClick={closePlaylist}
+                style={{ 
+                  padding: '0.4rem 0.8rem', 
+                  fontSize: '0.85rem',
+                  background: 'rgba(99, 102, 241, 0.2)',
+                  border: '1px solid rgba(99, 102, 241, 0.4)'
+                }}
+              >
+                ✕ Close Playlist
+              </button>
+            )}
+          </div>
           <p className="title">{current ? `${current.title} - ${current.artist}` : 'No track selected'}</p>
           <p className="meta">Duration {current?.duration ?? '--:--'} | Pitch x{current?.pitch?.toFixed(2) ?? '1.00'}</p>
-          <p className="meta">
-            Pointers: prev -&gt; {previousTitle} | next -&gt; {nextTitle}
-          </p>
 
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.2rem' }}>
             <div className={`vinyl-record ${isPlaying && current ? 'playing' : ''}`} />
@@ -476,9 +625,9 @@ function App() {
           </div>
 
           <div className="row">
-            <button onClick={() => postState('/player/previous')}><FaStepBackward /> Previous</button>
+            <button onClick={playPrevious}><FaStepBackward /> Previous</button>
             <button onClick={togglePlayPause}>{isPlaying ? <><FaPause /> Pause</> : <><FaPlay /> Play</>}</button>
-            <button onClick={() => postState('/player/next')}>Next <FaStepForward /></button>
+            <button onClick={playNext}>Next <FaStepForward /></button>
           </div>
 
           <div className="pitch-slider-container">
@@ -535,10 +684,16 @@ function App() {
                 }
                 try {
                   setMessage('Downloading...')
-                  const response = await fetch(`${API_BASE}/player/download`)
+                  // For YouTube URLs, open in new window
+                  if (current.audio_url.includes('youtube') || current.audio_url.includes('youtu.be')) {
+                    window.open(current.audio_url, '_blank')
+                    setMessage(`Opened: ${current.title}`)
+                    return
+                  }
+                  // For local files, download directly
+                  const response = await fetch(current.audio_url)
                   if (!response.ok) {
-                    const error = await response.json()
-                    setMessage(error.detail || 'Download failed.')
+                    setMessage('Download failed.')
                     return
                   }
                   
@@ -559,8 +714,8 @@ function App() {
             >
               <FaDownload /> Download Current
             </button>
-            <button onClick={() => postState('/playlist/sort', { by: 'title' })}><FaSort /> Sort by Title</button>
-            <button onClick={() => postState('/playlist/sort', { by: 'artist' })}><FaSort /> Sort by Artist</button>
+            <button onClick={() => selectedPlaylist && postState(`/playlists/${encodeURIComponent(selectedPlaylist)}/sort`, { sortBy: 'title' })}><FaSort /> Sort by Title</button>
+            <button onClick={() => selectedPlaylist && postState(`/playlists/${encodeURIComponent(selectedPlaylist)}/sort`, { sortBy: 'artist' })}><FaSort /> Sort by Artist</button>
           </div>
         </section>
 
@@ -580,7 +735,7 @@ function App() {
                   <button onClick={() => postState(`/player/select/${encodeURIComponent(song.title)}`)}><FaArrowRight /> Go</button>
                   <button
                     className="danger"
-                    onClick={() => postState(`/playlist/${encodeURIComponent(song.title)}`, undefined, 'DELETE')}
+                    onClick={() => selectedPlaylist && postState(`/playlists/${encodeURIComponent(selectedPlaylist)}/songs/${encodeURIComponent(song.title)}`, undefined, 'DELETE')}
                   >
                     <FaTrash /> Remove
                   </button>
@@ -716,12 +871,6 @@ function App() {
             >
               <FaTrash /> Clear Selection
             </button>
-            <button
-              onClick={() => setLocalFiles([])}
-              disabled={localFiles.length === 0}
-            >
-               Clear Selection
-             </button>
             </div>
           </section>
         </div>
@@ -734,19 +883,39 @@ function App() {
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.5rem' }}>
-              {queueSongs.map((song, index) => (
-                <div
-                  key={`${song.title}-${index}`}
-                  className="queue-item"
-                  onClick={() => postState(`/player/select/${encodeURIComponent(song.title)}`)}
-                >
-                  <div className="queue-item-text">
-                    <p className="queue-item-title">{index + 1}. {song.title}</p>
-                    <p className="queue-item-artist">{song.artist}</p>
-                  </div>
-                  <div className="queue-item-duration">{song.duration}</div>
-                </div>
-              ))}
+               {queueSongs.map((song, index) => (
+                 <div
+                   key={`${song.title}-${index}`}
+                   className="queue-item"
+                   onClick={() => {
+                     // If a playlist is loaded, handle selection locally
+                     if (selectedPlaylist) {
+                       setCurrent(song)
+                       // Auto-play if currently playing
+                       if (isPlaying && audioRef.current) {
+                         setTimeout(() => {
+                           audioRef.current?.play().catch(() => {
+                             setMessage('Could not auto-play next track')
+                           })
+                           // Restart visualizer animation for the new track
+                           if (!rafRef.current) {
+                             animateBackground()
+                           }
+                         }, 100)
+                       }
+                     } else {
+                       // Otherwise use backend endpoint
+                       postState(`/player/select/${encodeURIComponent(song.title)}`)
+                     }
+                   }}
+                 >
+                   <div className="queue-item-text">
+                     <p className="queue-item-title">{index + 1}. {song.title}</p>
+                     <p className="queue-item-artist">{song.artist}</p>
+                   </div>
+                   <div className="queue-item-duration">{song.duration}</div>
+                 </div>
+               ))}
             </div>
           )}
         </section>
