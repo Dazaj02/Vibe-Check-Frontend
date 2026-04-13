@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PlaylistsPage } from './PlaylistsPage'
-import { LibraryPage } from './LibraryPage'
-import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaArrowRight, FaCompactDisc } from 'react-icons/fa'
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaArrowRight, FaMusic, FaYoutube, FaTimes } from 'react-icons/fa'
 
 type Song = {
   title: string
@@ -32,12 +31,16 @@ const toPlayableUrl = (audioUrl: string) => {
 }
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<'player' | 'playlists' | 'library'>('player')
+  const [currentPage, setCurrentPage] = useState<'player' | 'playlists'>('player')
   const [playlist, setPlaylist] = useState<Song[]>([])
   const [current, setCurrent] = useState<Song | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [librarySongs, setLibrarySongs] = useState<Song[]>([])
+  const [showLibrary, setShowLibrary] = useState(false)
+  const [youtubeImportUrl, setYoutubeImportUrl] = useState('')
+  const [isImportingYoutube, setIsImportingYoutube] = useState(false)
   const [localPitch, setLocalPitch] = useState(1)
   const [volume, setVolume] = useState(1)
   const [isDraggingProgress, setIsDraggingProgress] = useState(false)
@@ -119,6 +122,101 @@ function App() {
     }
     setSelectedPlaylist(null)
     setMessage('Playlist closed')
+  }
+
+  const loadLibrary = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/library`)
+      if (!response.ok) {
+        setMessage('Failed to load library')
+        return
+      }
+      const data = await response.json()
+      setLibrarySongs(data.songs || [])
+    } catch (error) {
+      console.error('Error loading library:', error)
+      setMessage('Error loading library')
+    }
+  }
+
+  const addLibrarySongToPlaylist = async (song: Song) => {
+    if (!selectedPlaylist) {
+      setMessage('Please select a playlist first')
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/library/add-to-playlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playlistName: selectedPlaylist,
+          audioUrl: song.audio_url,
+        }),
+      })
+
+      if (!response.ok) {
+        setMessage('Failed to add song to playlist')
+        return
+      }
+
+      setMessage(`Added "${song.title}" to playlist`)
+      // Refresh playlist
+      const playlistResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
+      if (playlistResponse.ok) {
+        const playlistData = await playlistResponse.json() as { songs: Song[] }
+        setPlaylist(playlistData.songs)
+      }
+    } catch (error) {
+      setMessage('Error adding to playlist')
+    }
+  }
+
+  const importYoutubeToPlaylist = async () => {
+    if (!youtubeImportUrl.trim()) {
+      setMessage('Please enter a YouTube URL')
+      return
+    }
+
+    if (!selectedPlaylist) {
+      setMessage('Please select a playlist first')
+      return
+    }
+
+    setIsImportingYoutube(true)
+    try {
+      const response = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/add-youtube`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ youtube_url: youtubeImportUrl }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        setMessage(`Error: ${error.detail || 'Import failed'}`)
+        setIsImportingYoutube(false)
+        return
+      }
+
+      await response.json()
+      setMessage(`Successfully imported from YouTube!`)
+      setYoutubeImportUrl('')
+      
+      // Refresh playlist
+      const playlistResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
+      if (playlistResponse.ok) {
+        const playlistData = await playlistResponse.json() as { songs: Song[] }
+        setPlaylist(playlistData.songs)
+        if (playlistData.songs.length > 0 && !current) {
+          setCurrent(playlistData.songs[0])
+        }
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      setMessage(`Error: ${errorMsg}`)
+    } finally {
+      setIsImportingYoutube(false)
+    }
   }
 
   const playNext = () => {
@@ -428,6 +526,7 @@ function App() {
 
   useEffect(() => {
     refreshState().catch(() => setMessage('Could not load API'))
+    loadLibrary().catch(() => setMessage('Could not load library'))
     // Initialize static background
     stopVisualizerAnimation()
   }, [])
@@ -516,15 +615,7 @@ function App() {
       <audio ref={audioRef} crossOrigin="anonymous" style={{ display: 'none' }} />
       <canvas ref={canvasRef} className="visualizer-bg" style={{ pointerEvents: 'none' }} />
       
-      {currentPage === 'library' ? (
-        <LibraryPage 
-          onNavigateBack={() => setCurrentPage('player')}
-          onSongSelect={(song) => {
-            setCurrent(song)
-            setCurrentPage('player')
-          }}
-        />
-      ) : currentPage === 'playlists' ? (
+      {currentPage === 'playlists' ? (
         <PlaylistsPage 
           onNavigateBack={() => setCurrentPage('player')}
           onPlaylistSelect={loadSelectedPlaylist}
@@ -535,14 +626,9 @@ function App() {
             <header className="hero">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h1>Vibe Check</h1>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button onClick={() => setCurrentPage('library')} style={{ marginTop: 0 }}>
-                    <FaCompactDisc /> My Library
-                  </button>
-                  <button onClick={() => setCurrentPage('playlists')} style={{ marginTop: 0 }}>
-                    <FaList /> My Playlists
-                  </button>
-                </div>
+                <button onClick={() => setCurrentPage('playlists')} style={{ marginTop: 0 }}>
+                  <FaList /> My Playlists
+                </button>
               </div>
             </header>
 
@@ -953,16 +1039,151 @@ function App() {
                  </div>
                ))}
             </div>
+           )}
+         </section>
+
+        <section className="panel queue-panel">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2>My Library</h2>
+            <button
+              onClick={() => setShowLibrary(!showLibrary)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text)',
+                cursor: 'pointer',
+                fontSize: '1rem',
+              }}
+            >
+              {showLibrary ? <FaTimes /> : <FaMusic />}
+            </button>
+          </div>
+
+          {showLibrary && (
+            <>
+              {selectedPlaylist && (
+                <div style={{ marginBottom: '1rem', padding: '0.8rem', background: 'rgba(102, 126, 234, 0.1)', borderRadius: '4px' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    <input
+                      type="text"
+                      placeholder="Paste YouTube URL..."
+                      value={youtubeImportUrl}
+                      onChange={(e) => setYoutubeImportUrl(e.target.value)}
+                      style={{
+                        flex: 1,
+                        padding: '0.5rem',
+                        background: 'rgba(102, 126, 234, 0.1)',
+                        border: '1px solid rgba(102, 126, 234, 0.3)',
+                        borderRadius: '4px',
+                        color: 'var(--text)',
+                        fontSize: '0.85rem',
+                      }}
+                    />
+                    <button
+                      onClick={importYoutubeToPlaylist}
+                      disabled={isImportingYoutube || !youtubeImportUrl.trim()}
+                      style={{
+                        background: isImportingYoutube ? 'rgba(255, 0, 0, 0.3)' : 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
+                        border: 'none',
+                        color: 'white',
+                        padding: '0.5rem 0.8rem',
+                        borderRadius: '4px',
+                        cursor: isImportingYoutube ? 'not-allowed' : 'pointer',
+                        fontSize: '0.85rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                      }}
+                    >
+                      <FaYoutube /> {isImportingYoutube ? '...' : 'Import'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {librarySongs.length === 0 ? (
+                <p style={{ color: 'var(--muted)', margin: 0, marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                  Library is empty. Upload or import songs to get started.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
+                  {librarySongs.map((song) => (
+                    <div
+                      key={song.audio_url}
+                      style={{
+                        padding: '0.6rem',
+                        background: 'rgba(30, 30, 50, 0.6)',
+                        borderRadius: '4px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {song.title}
+                        </div>
+                        <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
+                          {song.artist}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCurrent(song)
+                          if (!isPlaying) {
+                            beginPlayback()
+                          }
+                        }}
+                        title="Play now"
+                        style={{
+                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                          border: 'none',
+                          color: 'white',
+                          padding: '0.4rem 0.6rem',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '0.7rem',
+                        }}
+                      >
+                        <FaPlay size={10} />
+                      </button>
+                      {selectedPlaylist && (
+                        <button
+                          onClick={() => addLibrarySongToPlaylist(song)}
+                          title="Add to current playlist"
+                          style={{
+                            background: 'rgba(76, 175, 80, 0.3)',
+                            border: '1px solid rgba(76, 175, 80, 0.6)',
+                            color: '#4caf50',
+                            padding: '0.4rem 0.6rem',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontSize: '0.7rem',
+                          }}
+                        >
+                          <FaPlus size={10} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
         </div>
 
-            <footer className="status">{message}</footer>
-          </main>
-        </div>
-      )}
-    </>
-  )
-}
-
-export default App
+             <footer className="status">{message}</footer>
+           </main>
+         </div>
+       )}
+     </>
+   )
+ }
+ 
+ export default App
