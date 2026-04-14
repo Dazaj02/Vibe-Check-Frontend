@@ -16,7 +16,7 @@ type PlaylistState = {
 }
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
-const ENABLE_AUDIO_ANALYZER = false
+const ENABLE_AUDIO_ANALYZER = true
 
 const toPlayableUrl = (audioUrl: string) => {
   if (audioUrl.startsWith('/stream?url=')) {
@@ -296,6 +296,11 @@ function App() {
     skipCurrentSyncRef.current = false
 
     try {
+      setupAudioAnalyzer()
+      if (ctxRef.current?.state === 'suspended') {
+        await ctxRef.current.resume()
+      }
+
       audio.pause()
       audio.currentTime = 0
 
@@ -907,6 +912,10 @@ function App() {
       }
     }
     const onPlay = () => {
+      setupAudioAnalyzer()
+      if (ctxRef.current?.state === 'suspended') {
+        void ctxRef.current.resume()
+      }
       setIsPlaying(true)
       isPlayingRef.current = true
     }
@@ -962,7 +971,10 @@ function App() {
   useEffect(() => {
     playlistRef.current = playlist
     currentIndexRef.current = currentIndex
-    if (currentIndex >= 0) {
+    if (
+      currentIndex >= 0 &&
+      (activeIndexRef.current < 0 || activeIndexRef.current >= playlist.length)
+    ) {
       activeIndexRef.current = currentIndex
     }
   }, [playlist, currentIndex])
