@@ -390,6 +390,20 @@ function App() {
     return false
   }
 
+  const playFromIndex = async (
+    index: number,
+    direction: 1 | -1 = 1,
+    sourceSongs?: Song[],
+  ): Promise<boolean> => {
+    const songs = sourceSongs ?? playlistRef.current
+    if (songs.length === 0) {
+      return false
+    }
+
+    const normalizedIndex = ((index % songs.length) + songs.length) % songs.length
+    return playFirstAvailableFrom(normalizedIndex, direction, songs)
+  }
+
   const probeSongDuration = (audioUrl: string): Promise<number> => {
     return new Promise((resolve) => {
       const audio = document.createElement('audio')
@@ -422,68 +436,46 @@ function App() {
   }
 
   const playNext = async () => {
-    if (playlist.length === 0) {
+    const songs = playlistRef.current
+    if (songs.length === 0) {
       setMessage('No songs available')
       return
     }
 
-    const derivedCurrentIndex = resolveCurrentIndex(playlist, current)
+    const derivedCurrentIndex = resolveCurrentIndex(songs, current)
     const safeCurrentIndex =
-      activeIndexRef.current >= 0 && activeIndexRef.current < playlist.length
+      activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
         ? activeIndexRef.current
         : derivedCurrentIndex
 
-    if (safeCurrentIndex < 0) {
-      const ok = await playFirstAvailableFrom(0, 1)
-      if (!ok) {
-        setMessage('Could not play next track')
-      }
-      return
-    }
+    const nextIndex = safeCurrentIndex >= 0
+      ? (safeCurrentIndex + 1) % songs.length
+      : 0
 
-    if (safeCurrentIndex < playlist.length - 1) {
-      const ok = await playFirstAvailableFrom(safeCurrentIndex + 1, 1)
-      if (!ok) {
-        setMessage('Could not play next track')
-      }
-      return
-    }
-
-    const ok = await playFirstAvailableFrom(0, 1)
+    const ok = await playFromIndex(nextIndex, 1, songs)
     if (!ok) {
       setMessage('Could not play next track')
     }
   }
 
   const playPrevious = async () => {
-    if (playlist.length === 0) {
+    const songs = playlistRef.current
+    if (songs.length === 0) {
       setMessage('No songs available')
       return
     }
 
-    const derivedCurrentIndex = resolveCurrentIndex(playlist, current)
+    const derivedCurrentIndex = resolveCurrentIndex(songs, current)
     const safeCurrentIndex =
-      activeIndexRef.current >= 0 && activeIndexRef.current < playlist.length
+      activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
         ? activeIndexRef.current
         : derivedCurrentIndex
 
-    if (safeCurrentIndex < 0) {
-      const ok = await playFirstAvailableFrom(playlist.length - 1, -1)
-      if (!ok) {
-        setMessage('Could not play previous track')
-      }
-      return
-    }
+    const previousIndex = safeCurrentIndex >= 0
+      ? (safeCurrentIndex - 1 + songs.length) % songs.length
+      : songs.length - 1
 
-    if (safeCurrentIndex > 0) {
-      const ok = await playFirstAvailableFrom(safeCurrentIndex - 1, -1)
-      if (!ok) {
-        setMessage('Could not play previous track')
-      }
-      return
-    }
-
-    const ok = await playFirstAvailableFrom(playlist.length - 1, -1)
+    const ok = await playFromIndex(previousIndex, -1, songs)
     if (!ok) {
       setMessage('Could not play previous track')
     }
@@ -897,7 +889,10 @@ function App() {
       }
 
       setMessage('Audio failed to load. Trying next available track...')
-      const idx = currentIndexRef.current
+      const idx =
+        activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
+          ? activeIndexRef.current
+          : currentIndexRef.current
       const startIndex = idx >= 0 && idx < songs.length - 1 ? idx + 1 : 0
       playFirstAvailableFrom(startIndex, 1, songs).catch(() => {
         setMessage('Audio failed to load. Check URL format or server access.')
@@ -928,7 +923,10 @@ function App() {
       isPlayingRef.current = false
       const songs = playlistRef.current
       if (songs.length > 0) {
-        const idx = currentIndexRef.current
+        const idx =
+          activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
+            ? activeIndexRef.current
+            : currentIndexRef.current
         const startIndex = idx >= 0 && idx < songs.length - 1 ? idx + 1 : 0
         playFirstAvailableFrom(startIndex, 1, songs).catch(() => {
           setMessage('Could not continue playlist')
