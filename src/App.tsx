@@ -321,6 +321,13 @@ function App() {
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
+      const errName = typeof error === 'object' && error !== null && 'name' in error ? String((error as { name?: unknown }).name) : ''
+
+      if (errName === 'NotAllowedError') {
+        setMessage(`Track ready: ${song.title}. Press Play.`)
+        return
+      }
+
       setMessage(`Could not play: ${msg}`)
       throw error
     } finally {
