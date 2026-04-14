@@ -59,6 +59,8 @@ function App() {
   const currentIndexRef = useRef(-1)
   const activeIndexRef = useRef(-1)
   const currentPositionRef = useRef(-1)
+  const selectedPlaylistRef = useRef<string | null>(null)
+  const listLoadRequestRef = useRef(0)
   const playRequestIdRef = useRef(0)
 
   const resolveCurrentIndex = (songs: Song[], currentSong: Song | null): number => {
@@ -115,6 +117,7 @@ function App() {
 
   const loadSelectedPlaylist = async (playlistName: string, songsOverride?: Song[]) => {
     try {
+      listLoadRequestRef.current += 1
       autoPlayPendingRef.current = false
       skipCurrentSyncRef.current = false
       isChangingSongRef.current = false
@@ -176,6 +179,7 @@ function App() {
 
   const closePlaylist = async () => {
     try {
+      listLoadRequestRef.current += 1
       autoPlayPendingRef.current = false
       skipCurrentSyncRef.current = false
       isChangingSongRef.current = false
@@ -795,12 +799,27 @@ function App() {
   }
 
   useEffect(() => {
+    selectedPlaylistRef.current = selectedPlaylist
+  }, [selectedPlaylist])
+
+  useEffect(() => {
+    const requestId = ++listLoadRequestRef.current
     fetch(`${API_BASE}/playlist/select-songs`, { method: 'POST' })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error('Could not load songs')
         }
+
+        if (requestId !== listLoadRequestRef.current) {
+          return
+        }
+
         const data = (await response.json()) as PlaylistState
+
+        if (requestId !== listLoadRequestRef.current || selectedPlaylistRef.current) {
+          return
+        }
+
         setPlaylist(data.songs || [])
         playlistRef.current = data.songs || []
         setCurrent(data.current || null)
