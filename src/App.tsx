@@ -57,6 +57,7 @@ function App() {
   const isChangingSongRef = useRef(false)
   const playlistRef = useRef<Song[]>([])
   const currentIndexRef = useRef(-1)
+  const activeIndexRef = useRef(-1)
   const playRequestIdRef = useRef(0)
 
   const resolveCurrentIndex = (songs: Song[], currentSong: Song | null): number => {
@@ -285,7 +286,7 @@ function App() {
     }
   }
 
-  const playSongNow = async (song: Song) => {
+  const playSongNow = async (song: Song, playlistIndex?: number, sourceSongs?: Song[]) => {
     const audio = audioRef.current
     if (!audio) return
     const requestId = ++playRequestIdRef.current
@@ -304,6 +305,10 @@ function App() {
       audio.playbackRate = song.pitch
 
       setCurrent(song)
+      const songsContext = sourceSongs ?? playlistRef.current
+      const resolvedIndex =
+        typeof playlistIndex === 'number' ? playlistIndex : resolveCurrentIndex(songsContext, song)
+      activeIndexRef.current = resolvedIndex
       setCurrentTime(0)
       setIsPlaying(false)
       setMessage(`Loading: ${song.title}...`)
@@ -335,8 +340,8 @@ function App() {
     }
   }
 
-  const playWithAnalyzerFallback = async (song: Song) => {
-    await playSongNow(song)
+  const playWithAnalyzerFallback = async (song: Song, playlistIndex?: number, sourceSongs?: Song[]) => {
+    await playSongNow(song, playlistIndex, sourceSongs)
   }
 
   const playFirstAvailableFrom = async (
@@ -344,7 +349,7 @@ function App() {
     direction: 1 | -1 = 1,
     sourceSongs?: Song[],
   ): Promise<boolean> => {
-    const songs = sourceSongs ?? playlist
+    const songs = sourceSongs ?? playlistRef.current
 
     if (songs.length === 0) {
       return false
@@ -354,7 +359,7 @@ function App() {
       const idx = (startIndex + attempt * direction + songs.length) % songs.length
       const candidate = songs[idx]
       try {
-        await playWithAnalyzerFallback(candidate)
+        await playWithAnalyzerFallback(candidate, idx, songs)
         return true
       } catch {
         // Try next candidate
@@ -417,7 +422,11 @@ function App() {
       return
     }
 
-    const safeCurrentIndex = resolveCurrentIndex(playlist, current)
+    const derivedCurrentIndex = resolveCurrentIndex(playlist, current)
+    const safeCurrentIndex =
+      activeIndexRef.current >= 0 && activeIndexRef.current < playlist.length
+        ? activeIndexRef.current
+        : derivedCurrentIndex
 
     if (safeCurrentIndex < 0) {
       const ok = await playFirstAvailableFrom(0, 1)
@@ -447,7 +456,11 @@ function App() {
       return
     }
 
-    const safeCurrentIndex = resolveCurrentIndex(playlist, current)
+    const derivedCurrentIndex = resolveCurrentIndex(playlist, current)
+    const safeCurrentIndex =
+      activeIndexRef.current >= 0 && activeIndexRef.current < playlist.length
+        ? activeIndexRef.current
+        : derivedCurrentIndex
 
     if (safeCurrentIndex < 0) {
       const ok = await playFirstAvailableFrom(playlist.length - 1, -1)
@@ -949,6 +962,9 @@ function App() {
   useEffect(() => {
     playlistRef.current = playlist
     currentIndexRef.current = currentIndex
+    if (currentIndex >= 0) {
+      activeIndexRef.current = currentIndex
+    }
   }, [playlist, currentIndex])
 
   useEffect(() => {
@@ -1221,7 +1237,7 @@ function App() {
                   )}
                   <button
                     onClick={() => {
-                      playWithAnalyzerFallback(song).catch(() => undefined)
+                      playWithAnalyzerFallback(song, index, playlist).catch(() => undefined)
                     }}
                     title="Play"
                     style={{
@@ -1404,9 +1420,14 @@ function App() {
                        key={`${song.title}-${index}`}
                        className={`queue-item ${selectedPlaylist ? 'queue-item-compact' : ''}`}
                        onClick={() => {
-                       // If a playlist is loaded, handle selection locally
-                       if (selectedPlaylist) {
-                          playWithAnalyzerFallback(song).catch(() => undefined)
+                        // If a playlist is loaded, handle selection locally
+                        if (selectedPlaylist) {
+                          const targetIndex = resolveCurrentIndex(playlist, song)
+                          playWithAnalyzerFallback(
+                            song,
+                            targetIndex >= 0 ? targetIndex : undefined,
+                            playlist,
+                          ).catch(() => undefined)
                         } else {
                           // Otherwise use backend endpoint
                           postState(`/player/select/${encodeURIComponent(song.title)}`)
