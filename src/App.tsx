@@ -59,8 +59,25 @@ function App() {
   const currentIndexRef = useRef(-1)
   const playRequestIdRef = useRef(0)
 
+  const resolveCurrentIndex = (songs: Song[], currentSong: Song | null): number => {
+    if (!currentSong) return -1
+
+    const exactRefIndex = songs.findIndex((song) => song === currentSong)
+    if (exactRefIndex >= 0) return exactRefIndex
+
+    const strictMatchIndex = songs.findIndex(
+      (song) =>
+        song.audio_url === currentSong.audio_url &&
+        song.title === currentSong.title &&
+        song.artist === currentSong.artist,
+    )
+    if (strictMatchIndex >= 0) return strictMatchIndex
+
+    return songs.findIndex((song) => song.audio_url === currentSong.audio_url)
+  }
+
   const currentIndex = useMemo(
-    () => playlist.findIndex((song) => song.audio_url === current?.audio_url),
+    () => resolveCurrentIndex(playlist, current),
     [playlist, current],
   )
 
@@ -393,7 +410,9 @@ function App() {
       return
     }
 
-    if (currentIndex < 0) {
+    const safeCurrentIndex = resolveCurrentIndex(playlist, current)
+
+    if (safeCurrentIndex < 0) {
       const ok = await playFirstAvailableFrom(0, 1)
       if (!ok) {
         setMessage('Could not play next track')
@@ -401,8 +420,8 @@ function App() {
       return
     }
 
-    if (currentIndex < playlist.length - 1) {
-      const ok = await playFirstAvailableFrom(currentIndex + 1, 1)
+    if (safeCurrentIndex < playlist.length - 1) {
+      const ok = await playFirstAvailableFrom(safeCurrentIndex + 1, 1)
       if (!ok) {
         setMessage('Could not play next track')
       }
@@ -421,7 +440,9 @@ function App() {
       return
     }
 
-    if (currentIndex < 0) {
+    const safeCurrentIndex = resolveCurrentIndex(playlist, current)
+
+    if (safeCurrentIndex < 0) {
       const ok = await playFirstAvailableFrom(playlist.length - 1, -1)
       if (!ok) {
         setMessage('Could not play previous track')
@@ -429,8 +450,8 @@ function App() {
       return
     }
 
-    if (currentIndex > 0) {
-      const ok = await playFirstAvailableFrom(currentIndex - 1, -1)
+    if (safeCurrentIndex > 0) {
+      const ok = await playFirstAvailableFrom(safeCurrentIndex - 1, -1)
       if (!ok) {
         setMessage('Could not play previous track')
       }
