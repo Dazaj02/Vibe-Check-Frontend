@@ -39,6 +39,7 @@ function App() {
   const [volume, setVolume] = useState(1)
   const [isDraggingProgress, setIsDraggingProgress] = useState(false)
   const [message, setMessage] = useState('Ready')
+  const [navDebug, setNavDebug] = useState('')
   const [localFiles, setLocalFiles] = useState<File[]>([])
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null)
@@ -324,9 +325,11 @@ function App() {
       const songsContext = sourceSongs ?? playlistRef.current
       const resolvedIndex =
         typeof playlistIndex === 'number' ? playlistIndex : resolveCurrentIndex(songsContext, song)
+      const audioSrc = new URL(toPlayableUrl(song.audio_url), window.location.href).href
       activeIndexRef.current = resolvedIndex
       currentPositionRef.current = resolvedIndex
       currentIndexRef.current = resolvedIndex
+      setNavDebug(`PLAY list=${selectedPlaylistRef.current || '__songs__'} idx=${resolvedIndex} title=${song.title} src=${audioSrc}`)
       setCurrentTime(0)
       setIsPlaying(false)
       setMessage(`Loading: ${song.title}...`)
@@ -488,6 +491,9 @@ function App() {
     }
 
     const nextIndex = safeCurrentIndex >= 0 ? (safeCurrentIndex + 1) % songs.length : 0
+    setNavDebug(
+      `NEXT list=${selectedPlaylistRef.current || '__songs__'} len=${songs.length} from=${safeCurrentIndex} to=${nextIndex} fromTitle=${safeCurrentIndex >= 0 ? songs[safeCurrentIndex].title : 'none'} toTitle=${songs[nextIndex].title}`,
+    )
 
     if (safeCurrentIndex >= 0 && nextIndex === safeCurrentIndex && songs.length > 1) {
       const forcedNextIndex = (safeCurrentIndex + 1) % songs.length
@@ -538,6 +544,9 @@ function App() {
 
     const previousIndex =
       safeCurrentIndex >= 0 ? (safeCurrentIndex - 1 + songs.length) % songs.length : songs.length - 1
+    setNavDebug(
+      `PREV list=${selectedPlaylistRef.current || '__songs__'} len=${songs.length} from=${safeCurrentIndex} to=${previousIndex} fromTitle=${safeCurrentIndex >= 0 ? songs[safeCurrentIndex].title : 'none'} toTitle=${songs[previousIndex].title}`,
+    )
 
     if (safeCurrentIndex >= 0 && previousIndex === safeCurrentIndex && songs.length > 1) {
       const forcedPreviousIndex = (safeCurrentIndex - 1 + songs.length) % songs.length
@@ -1576,7 +1585,14 @@ function App() {
          </section>
         </div>
 
-             <footer className="status">{message}</footer>
+             <footer className="status">
+               {message}
+               {navDebug ? (
+                 <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', opacity: 0.9, wordBreak: 'break-word' }}>
+                   {navDebug}
+                 </div>
+               ) : null}
+             </footer>
            </main>
          </div>
        )}
