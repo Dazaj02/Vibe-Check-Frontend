@@ -58,6 +58,7 @@ function App() {
   const playlistRef = useRef<Song[]>([])
   const currentIndexRef = useRef(-1)
   const activeIndexRef = useRef(-1)
+  const currentPositionRef = useRef(-1)
   const playRequestIdRef = useRef(0)
 
   const resolveCurrentIndex = (songs: Song[], currentSong: Song | null): number => {
@@ -314,6 +315,7 @@ function App() {
       const resolvedIndex =
         typeof playlistIndex === 'number' ? playlistIndex : resolveCurrentIndex(songsContext, song)
       activeIndexRef.current = resolvedIndex
+      currentPositionRef.current = resolvedIndex
       setCurrentTime(0)
       setIsPlaying(false)
       setMessage(`Loading: ${song.title}...`)
@@ -444,9 +446,13 @@ function App() {
 
     const derivedCurrentIndex = resolveCurrentIndex(songs, current)
     const safeCurrentIndex =
+      currentPositionRef.current >= 0 && currentPositionRef.current < songs.length
+        ? currentPositionRef.current
+        : (
       activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
         ? activeIndexRef.current
         : derivedCurrentIndex
+        )
 
     const nextIndex = safeCurrentIndex >= 0
       ? (safeCurrentIndex + 1) % songs.length
@@ -467,9 +473,13 @@ function App() {
 
     const derivedCurrentIndex = resolveCurrentIndex(songs, current)
     const safeCurrentIndex =
+      currentPositionRef.current >= 0 && currentPositionRef.current < songs.length
+        ? currentPositionRef.current
+        : (
       activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
         ? activeIndexRef.current
         : derivedCurrentIndex
+        )
 
     const previousIndex = safeCurrentIndex >= 0
       ? (safeCurrentIndex - 1 + songs.length) % songs.length
@@ -890,9 +900,13 @@ function App() {
 
       setMessage('Audio failed to load. Trying next available track...')
       const idx =
+        currentPositionRef.current >= 0 && currentPositionRef.current < songs.length
+          ? currentPositionRef.current
+          : (
         activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
           ? activeIndexRef.current
           : currentIndexRef.current
+          )
       const startIndex = idx >= 0 && idx < songs.length - 1 ? idx + 1 : 0
       playFirstAvailableFrom(startIndex, 1, songs).catch(() => {
         setMessage('Audio failed to load. Check URL format or server access.')
@@ -924,9 +938,13 @@ function App() {
       const songs = playlistRef.current
       if (songs.length > 0) {
         const idx =
+          currentPositionRef.current >= 0 && currentPositionRef.current < songs.length
+            ? currentPositionRef.current
+            : (
           activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
             ? activeIndexRef.current
             : currentIndexRef.current
+            )
         const startIndex = idx >= 0 && idx < songs.length - 1 ? idx + 1 : 0
         playFirstAvailableFrom(startIndex, 1, songs).catch(() => {
           setMessage('Could not continue playlist')
@@ -969,10 +987,22 @@ function App() {
   useEffect(() => {
     playlistRef.current = playlist
     currentIndexRef.current = currentIndex
-    if (
-      currentIndex >= 0 &&
-      (activeIndexRef.current < 0 || activeIndexRef.current >= playlist.length)
-    ) {
+    if (currentIndex >= 0) {
+      const currentAtPosition = playlist[currentPositionRef.current]
+      if (
+        currentPositionRef.current < 0 ||
+        currentPositionRef.current >= playlist.length ||
+        !currentAtPosition ||
+        currentAtPosition.audio_url !== current?.audio_url
+      ) {
+        currentPositionRef.current = currentIndex
+      }
+
+      if (activeIndexRef.current < 0 || activeIndexRef.current >= playlist.length) {
+        activeIndexRef.current = currentIndex
+      }
+    } else {
+      currentPositionRef.current = -1
       activeIndexRef.current = currentIndex
     }
   }, [playlist, currentIndex])
