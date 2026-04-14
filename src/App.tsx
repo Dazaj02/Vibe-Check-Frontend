@@ -392,20 +392,6 @@ function App() {
     return false
   }
 
-  const playFromIndex = async (
-    index: number,
-    direction: 1 | -1 = 1,
-    sourceSongs?: Song[],
-  ): Promise<boolean> => {
-    const songs = sourceSongs ?? playlistRef.current
-    if (songs.length === 0) {
-      return false
-    }
-
-    const normalizedIndex = ((index % songs.length) + songs.length) % songs.length
-    return playFirstAvailableFrom(normalizedIndex, direction, songs)
-  }
-
   const probeSongDuration = (audioUrl: string): Promise<number> => {
     return new Promise((resolve) => {
       const audio = document.createElement('audio')
@@ -444,23 +430,27 @@ function App() {
       return
     }
 
-    const derivedCurrentIndex = resolveCurrentIndex(songs, current)
-    const safeCurrentIndex =
-      currentPositionRef.current >= 0 && currentPositionRef.current < songs.length
-        ? currentPositionRef.current
-        : (
-      activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
-        ? activeIndexRef.current
-        : derivedCurrentIndex
-        )
+    let safeCurrentIndex = currentPositionRef.current
+    if (
+      safeCurrentIndex < 0 ||
+      safeCurrentIndex >= songs.length ||
+      !current ||
+      songs[safeCurrentIndex]?.audio_url !== current.audio_url
+    ) {
+      safeCurrentIndex = resolveCurrentIndex(songs, current)
+    }
 
-    const nextIndex = safeCurrentIndex >= 0
-      ? (safeCurrentIndex + 1) % songs.length
-      : 0
+    const nextIndex = safeCurrentIndex >= 0 ? (safeCurrentIndex + 1) % songs.length : 0
 
-    const ok = await playFromIndex(nextIndex, 1, songs)
-    if (!ok) {
-      setMessage('Could not play next track')
+    currentPositionRef.current = nextIndex
+    activeIndexRef.current = nextIndex
+    try {
+      await playSongNow(songs[nextIndex], nextIndex, songs)
+    } catch {
+      const ok = await playFirstAvailableFrom(nextIndex, 1, songs)
+      if (!ok) {
+        setMessage('Could not play next track')
+      }
     }
   }
 
@@ -471,23 +461,28 @@ function App() {
       return
     }
 
-    const derivedCurrentIndex = resolveCurrentIndex(songs, current)
-    const safeCurrentIndex =
-      currentPositionRef.current >= 0 && currentPositionRef.current < songs.length
-        ? currentPositionRef.current
-        : (
-      activeIndexRef.current >= 0 && activeIndexRef.current < songs.length
-        ? activeIndexRef.current
-        : derivedCurrentIndex
-        )
+    let safeCurrentIndex = currentPositionRef.current
+    if (
+      safeCurrentIndex < 0 ||
+      safeCurrentIndex >= songs.length ||
+      !current ||
+      songs[safeCurrentIndex]?.audio_url !== current.audio_url
+    ) {
+      safeCurrentIndex = resolveCurrentIndex(songs, current)
+    }
 
-    const previousIndex = safeCurrentIndex >= 0
-      ? (safeCurrentIndex - 1 + songs.length) % songs.length
-      : songs.length - 1
+    const previousIndex =
+      safeCurrentIndex >= 0 ? (safeCurrentIndex - 1 + songs.length) % songs.length : songs.length - 1
 
-    const ok = await playFromIndex(previousIndex, -1, songs)
-    if (!ok) {
-      setMessage('Could not play previous track')
+    currentPositionRef.current = previousIndex
+    activeIndexRef.current = previousIndex
+    try {
+      await playSongNow(songs[previousIndex], previousIndex, songs)
+    } catch {
+      const ok = await playFirstAvailableFrom(previousIndex, -1, songs)
+      if (!ok) {
+        setMessage('Could not play previous track')
+      }
     }
   }
 
