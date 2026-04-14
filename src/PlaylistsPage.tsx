@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FaPlus, FaTrash, FaArrowLeft, FaMusic, FaClock, FaDownload, FaYoutube } from 'react-icons/fa'
+import { FaPlus, FaTrash, FaArrowLeft, FaMusic, FaClock, FaDownload, FaYoutube, FaPlay } from 'react-icons/fa'
 
 type Song = {
   title: string
@@ -64,10 +64,10 @@ const isValidVideoUrl = (url: string): { valid: boolean; message?: string } => {
 
 export function PlaylistsPage({ 
   onNavigateBack, 
-  onPlaylistSelect: _onPlaylistSelect
+  onPlaylistSelect
 }: { 
   onNavigateBack: () => void
-  onPlaylistSelect: (playlistName: string) => void
+  onPlaylistSelect: (playlistName: string, songsOverride?: Song[]) => void
 }) {
   const [playlists, setPlaylists] = useState<string[]>([])
   const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistInfo | null>(null)
@@ -253,8 +253,8 @@ export function PlaylistsPage({
     <div className="page">
       <canvas className="visualizer-bg" />
       
-      <main className="shell" style={{ maxWidth: '1400px' }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+      <main className="shell playlists-shell">
+        <header className="playlists-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <button onClick={onNavigateBack} style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '1.5rem' }}>
               <FaArrowLeft />
@@ -263,9 +263,9 @@ export function PlaylistsPage({
           </div>
         </header>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', height: 'calc(100vh - 150px)' }}>
+        <div className="playlists-grid">
           {/* Left Panel: Create and Manage Playlists */}
-          <section style={{ background: 'rgba(30, 30, 50, 0.8)', borderRadius: '12px', padding: '1.5rem', overflowY: 'auto' }}>
+          <section className="playlist-card">
             <h2 style={{ marginTop: 0 }}>Create Playlist</h2>
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem' }}>
               <input
@@ -299,50 +299,78 @@ export function PlaylistsPage({
               {playlists.map((name) => (
                 <div
                   key={name}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    background: selectedPlaylist?.name === name ? 'rgba(102, 126, 234, 0.3)' : 'rgba(0,0,0,0.3)',
-                    padding: '0.8rem',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    border: selectedPlaylist?.name === name ? '2px solid #667eea' : '1px solid rgba(255,255,255,0.1)'
-                  }}
+                  className={selectedPlaylist?.name === name ? 'playlist-item active' : 'playlist-item'}
                   onClick={() => loadPlaylist(name)}
                 >
                   <div style={{ flex: 1 }}>
                     <p style={{ margin: '0.3rem 0', fontWeight: 'bold' }}>{name}</p>
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      deletePlaylist(name)
-                    }}
-                    style={{
-                      background: 'rgba(255, 0, 0, 0.2)',
-                      border: 'none',
-                      color: '#ff6b6b',
-                      cursor: 'pointer',
-                      padding: '0.4rem 0.8rem',
-                      borderRadius: '4px',
-                      fontSize: '0.9rem'
-                    }}
-                  >
-                    <FaTrash />
-                  </button>
+                  <div className="playlist-actions">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onPlaylistSelect(name, selectedPlaylist?.name === name ? selectedPlaylist.songs : undefined)
+                      }}
+                      style={{
+                        background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                        border: 'none',
+                        color: 'white',
+                        cursor: 'pointer',
+                        padding: '0.35rem 0.55rem',
+                        borderRadius: '4px',
+                        fontSize: '0.85rem'
+                      }}
+                      title="Play playlist"
+                    >
+                      <FaPlay />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deletePlaylist(name)
+                      }}
+                      style={{
+                        background: 'rgba(255, 0, 0, 0.2)',
+                        border: 'none',
+                        color: '#ff6b6b',
+                        cursor: 'pointer',
+                        padding: '0.35rem 0.55rem',
+                        borderRadius: '4px',
+                        fontSize: '0.85rem'
+                      }}
+                    >
+                      <FaTrash />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           </section>
 
           {/* Right Panel: Manage Selected Playlist */}
-          <section style={{ background: 'rgba(30, 30, 50, 0.8)', borderRadius: '12px', padding: '1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <section className="playlist-card" style={{ display: 'flex', flexDirection: 'column' }}>
             {!selectedPlaylist ? (
               <p style={{ color: 'var(--muted)', marginTop: '2rem' }}>Select a playlist to view and add songs</p>
             ) : (
               <>
-                <h2 style={{ marginTop: 0 }}>{selectedPlaylist.name}</h2>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
+                  <h2 style={{ margin: 0 }}>{selectedPlaylist.name}</h2>
+                  <button
+                    onClick={() => onPlaylistSelect(selectedPlaylist.name, selectedPlaylist.songs)}
+                    style={{
+                      background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                      border: 'none',
+                      color: 'white',
+                      padding: '0.45rem 0.7rem',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem'
+                    }}
+                  >
+                    <FaPlay /> Play Playlist
+                  </button>
+                </div>
 
                 {/* Add YouTube Playlist */}
                 <div style={{ marginBottom: '1.5rem', background: 'rgba(0,0,0,0.3)', padding: '1rem', borderRadius: '8px' }}>
@@ -412,25 +440,17 @@ export function PlaylistsPage({
                   {selectedPlaylist.songs.length === 0 ? (
                     <p style={{ color: 'var(--muted)' }}>No songs in this playlist. Add songs using YouTube Playlist or Song import above.</p>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: 'calc(100% - 3rem)', overflowY: 'auto' }}>
+                    <div className="playlist-song-list">
                       {selectedPlaylist.songs.map((song, index) => (
-                        <div
-                          key={`${song.title}-${index}`}
-                          style={{
-                            background: 'rgba(0,0,0,0.3)',
-                            padding: '0.8rem',
-                            borderRadius: '6px',
-                            borderLeft: '3px solid #667eea'
-                          }}
-                        >
-                          <p style={{ margin: '0.3rem 0', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                        <div key={`${song.title}-${index}`} className="playlist-song-item">
+                          <p className="playlist-song-title">
                             {index + 1}. {song.title}
                           </p>
-                          <p style={{ margin: '0.2rem 0', color: 'var(--muted)', fontSize: '0.85rem' }}>
+                          <p className="playlist-song-meta">
                             <FaMusic size={12} style={{ marginRight: '0.3rem' }} />
                             {song.artist}
                           </p>
-                          <p style={{ margin: '0.2rem 0', color: 'var(--muted)', fontSize: '0.85rem' }}>
+                          <p className="playlist-song-meta">
                             <FaClock size={12} style={{ marginRight: '0.3rem' }} />
                             {song.duration}
                           </p>

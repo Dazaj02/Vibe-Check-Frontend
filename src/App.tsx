@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PlaylistsPage } from './PlaylistsPage'
-import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus, FaMusic, FaYoutube, FaTimes } from 'react-icons/fa'
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus } from 'react-icons/fa'
 
 type Song = {
   title: string
@@ -16,16 +16,14 @@ type PlaylistState = {
 }
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
+const ENABLE_AUDIO_ANALYZER = false
 
 const toPlayableUrl = (audioUrl: string) => {
-  if (audioUrl.startsWith('http://') || audioUrl.startsWith('https://')) {
-    return `${API_BASE}/stream?url=${encodeURIComponent(audioUrl)}`
-  }
   if (audioUrl.startsWith('/stream?url=')) {
     return `${API_BASE}${audioUrl}`
   }
-  if (audioUrl.startsWith('/')) {
-    return `${API_BASE}${audioUrl}`
+  if (audioUrl.startsWith('/') || audioUrl.startsWith('http://') || audioUrl.startsWith('https://')) {
+    return `${API_BASE}/stream?url=${encodeURIComponent(audioUrl)}`
   }
   return audioUrl
 }
@@ -37,10 +35,6 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [librarySongs, setLibrarySongs] = useState<Song[]>([])
-  const [showLibrary, setShowLibrary] = useState(true)
-  const [youtubeImportUrl, setYoutubeImportUrl] = useState('')
-  const [isImportingYoutube, setIsImportingYoutube] = useState(false)
   const [localPitch, setLocalPitch] = useState(1)
   const [volume, setVolume] = useState(1)
   const [isDraggingProgress, setIsDraggingProgress] = useState(false)
@@ -48,7 +42,6 @@ function App() {
   const [localFiles, setLocalFiles] = useState<File[]>([])
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null)
-  const [previousState, setPreviousState] = useState<{ playlist: Song[]; current: Song | null } | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -58,18 +51,34 @@ function App() {
   const waveformDataRef = useRef<Uint8Array | null>(null)
   const progressRef = useRef<HTMLDivElement | null>(null)
   const volumeRef = useRef<number>(1)
+  const autoPlayPendingRef = useRef(false)
+  const skipCurrentSyncRef = useRef(false)
+  const isPlayingRef = useRef(false)
+  const isChangingSongRef = useRef(false)
+  const playlistRef = useRef<Song[]>([])
+  const currentIndexRef = useRef(-1)
+  const playRequestIdRef = useRef(0)
 
   const currentIndex = useMemo(
-    () => playlist.findIndex((song) => song.title === current?.title),
+    () => playlist.findIndex((song) => song.audio_url === current?.audio_url),
     [playlist, current],
   )
 
-  // Get upcoming songs for the queue (next 5 songs)
+  // Get upcoming songs for the queue (compact list)
   const queueSongs = useMemo(() => {
-    if (currentIndex < 0 || currentIndex >= playlist.length) return []
+    if (playlist.length === 0) return []
+
+    const compactCount = 6
+
+    if (currentIndex < 0 || currentIndex >= playlist.length) {
+      return playlist.slice(0, compactCount)
+    }
+
     const upcoming = playlist.slice(currentIndex + 1)
-    return upcoming.slice(0, 5)
+    return upcoming.slice(0, compactCount)
   }, [playlist, currentIndex])
+
+  const activeListName = selectedPlaylist || '__songs__'
 
   const refreshState = async () => {
     try {
@@ -85,149 +94,99 @@ function App() {
     }
   }
 
-  const loadSelectedPlaylist = async (playlistName: string) => {
+  const loadSelectedPlaylist = async (playlistName: string, songsOverride?: Song[]) => {
     try {
-      // Guardar el estado actual antes de cargar la playlist
-      setPreviousState({ playlist, current })
-      
-      const response = await fetch(`${API_BASE}/playlists/${encodeURIComponent(playlistName)}`)
-      if (!response.ok) {
-        setMessage('Failed to load playlist')
-        return
+      autoPlayPendingRef.current = false
+      skipCurrentSyncRef.current = false
+      isChangingSongRef.current = false
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current.removeAttribute('src')
+        audioRef.current.load()
       }
-      const playlistData = await response.json() as { name: string; songs: Song[]; total: number }
-      if (!Array.isArray(playlistData.songs)) {
+
+      let songsToLoad: Song[] = []
+
+      if (Array.isArray(songsOverride)) {
+        songsToLoad = songsOverride
+      } else {
+        const response = await fetch(`${API_BASE}/playlists/${encodeURIComponent(playlistName)}`)
+        if (!response.ok) {
+          setMessage('Failed to load playlist')
+          return
+        }
+        const playlistData = await response.json() as { name: string; songs: Song[]; total: number }
+        if (!Array.isArray(playlistData.songs)) {
+          setMessage('Invalid playlist data')
+          return
+        }
+        songsToLoad = playlistData.songs
+      }
+
+      if (!Array.isArray(songsToLoad)) {
         setMessage('Invalid playlist data')
         return
       }
-      setPlaylist(playlistData.songs)
+
+      setPlaylist(songsToLoad)
+      playlistRef.current = songsToLoad
       setSelectedPlaylist(playlistName)
-      setCurrent(playlistData.songs[0] || null)
+      setCurrentTime(0)
+      stopVisualizerAnimation()
       setMessage(`Loaded playlist: ${playlistName}`)
-      
+
       // Cambiar al player automáticamente
       setCurrentPage('player')
+
+      if (songsToLoad.length > 0) {
+        const ok = await playFirstAvailableFrom(0, 1, songsToLoad)
+        if (!ok) {
+          setMessage('Could not start playlist playback')
+        }
+      } else {
+        setCurrent(null)
+      }
     } catch (error) {
       console.error('Error loading playlist:', error)
       setMessage('Error loading playlist')
     }
   }
 
-  const closePlaylist = () => {
-    // Restaurar el estado anterior
-    if (previousState) {
-      setPlaylist(previousState.playlist)
-      setCurrent(previousState.current)
-      setPreviousState(null)
-    }
-    setSelectedPlaylist(null)
-    setMessage('Playlist closed')
-  }
-
-  const loadLibrary = async () => {
+  const closePlaylist = async () => {
     try {
-      const response = await fetch(`${API_BASE}/library`)
-      if (!response.ok) {
-        setMessage('Failed to load library')
-        return
+      autoPlayPendingRef.current = false
+      skipCurrentSyncRef.current = false
+      isChangingSongRef.current = false
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current.removeAttribute('src')
+        audioRef.current.load()
       }
-      const data = await response.json()
-      setLibrarySongs(data.songs || [])
-    } catch (error) {
-      console.error('Error loading library:', error)
-      setMessage('Error loading library')
-    }
-  }
 
-  const addLibrarySongToPlaylist = async (song: Song) => {
-    if (!selectedPlaylist) {
-      setMessage('Please select a playlist first')
-      return
-    }
-
-    try {
-      const response = await fetch(`${API_BASE}/library/add-to-playlist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          playlistName: selectedPlaylist,
-          audioUrl: song.audio_url,
-        }),
-      })
-
+      const response = await fetch(`${API_BASE}/playlist/select-songs`, { method: 'POST' })
       if (!response.ok) {
-        setMessage('Failed to add song to playlist')
+        setMessage('Could not return to songs')
         return
       }
 
-      setMessage(`Added "${song.title}" to playlist`)
-      // Refresh playlist
-      const playlistResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
-      if (playlistResponse.ok) {
-        const playlistData = await playlistResponse.json() as { songs: Song[] }
-        setPlaylist(playlistData.songs)
-      }
-    } catch (error) {
-      setMessage('Error adding to playlist')
-    }
-  }
-
-  const importYoutubeToPlaylist = async () => {
-    if (!youtubeImportUrl.trim()) {
-      setMessage('Please enter a YouTube URL')
-      return
-    }
-
-    if (!selectedPlaylist) {
-      setMessage('Please select a playlist first')
-      return
-    }
-
-    setIsImportingYoutube(true)
-    try {
-      const response = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/add-youtube`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ youtube_url: youtubeImportUrl }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        setMessage(`Error: ${error.detail || 'Import failed'}`)
-        setIsImportingYoutube(false)
-        return
-      }
-
-      await response.json()
-      setMessage(`Successfully imported from YouTube!`)
-      setYoutubeImportUrl('')
-      
-      // Refresh playlist
-      const playlistResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
-      if (playlistResponse.ok) {
-        const playlistData = await playlistResponse.json() as { songs: Song[] }
-        setPlaylist(playlistData.songs)
-        if (playlistData.songs.length > 0 && !current) {
-          setCurrent(playlistData.songs[0])
-        }
-      }
+      const data = await response.json() as PlaylistState & { message?: string }
+      const nextSongs = Array.isArray(data.songs) ? data.songs : []
+      setPlaylist(nextSongs)
+      playlistRef.current = nextSongs
+      setCurrent(data.current || nextSongs[0] || null)
+      setSelectedPlaylist(null)
+      setMessage('Showing Songs')
+      setCurrentPage('playlists')
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
       setMessage(`Error: ${errorMsg}`)
-    } finally {
-      setIsImportingYoutube(false)
     }
   }
 
-  const removeSongFromPlaylist = async (songTitle: string) => {
-    if (!selectedPlaylist) {
-      setMessage('No playlist selected')
-      return
-    }
-
+  const removeSongFromPlaylist = async (songIndex: number, songTitle: string) => {
     try {
       const response = await fetch(
-        `${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/songs/${encodeURIComponent(songTitle)}`,
+        `${API_BASE}/playlists/${encodeURIComponent(activeListName)}/songs/index/${songIndex}`,
         { method: 'DELETE' }
       )
 
@@ -238,13 +197,23 @@ function App() {
       }
 
       // Refresh playlist
-      const playlistResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
+      const playlistResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(activeListName)}`)
       if (playlistResponse.ok) {
         const playlistData = await playlistResponse.json() as { songs: Song[] }
-        setPlaylist(playlistData.songs)
-        // If removed song was current, move to next
-        if (current?.title === songTitle && playlistData.songs.length > 0) {
-          setCurrent(playlistData.songs[0])
+        const nextSongs = Array.isArray(playlistData.songs) ? playlistData.songs : []
+        playlistRef.current = nextSongs
+        setPlaylist(nextSongs)
+
+        if (current) {
+          const stillExists = nextSongs.find((s) => s.audio_url === current.audio_url)
+          if (stillExists) {
+            setCurrent(stillExists)
+          } else if (nextSongs.length > 0) {
+            setCurrent(nextSongs[Math.min(songIndex, nextSongs.length - 1)])
+          } else {
+            setCurrent(null)
+            setIsPlaying(false)
+          }
         }
       }
       setMessage(`Removed: ${songTitle}`)
@@ -255,14 +224,13 @@ function App() {
   }
 
   const moveSongInPlaylist = async (fromIndex: number, toIndex: number) => {
-    if (!selectedPlaylist) {
-      setMessage('No playlist selected')
+    if (fromIndex === toIndex) {
       return
     }
 
     try {
       const response = await fetch(
-        `${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/move-song`,
+        `${API_BASE}/playlists/${encodeURIComponent(activeListName)}/move-song`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -277,7 +245,22 @@ function App() {
       }
 
       const data = await response.json() as { songs: Song[] }
-      setPlaylist(data.songs)
+      const nextSongs = Array.isArray(data.songs) ? data.songs : []
+      playlistRef.current = nextSongs
+      setPlaylist(nextSongs)
+
+      if (current) {
+        const relocatedCurrent = nextSongs.find((s) => s.audio_url === current.audio_url)
+        if (relocatedCurrent) {
+          setCurrent(relocatedCurrent)
+        } else if (nextSongs.length > 0) {
+          setCurrent(nextSongs[0])
+        } else {
+          setCurrent(null)
+          setIsPlaying(false)
+        }
+      }
+
       setMessage('Song moved')
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
@@ -285,79 +268,178 @@ function App() {
     }
   }
 
-  const playNext = () => {
-    if (selectedPlaylist) {
-      // If a playlist is loaded, navigate locally
-      if (currentIndex < playlist.length - 1) {
-        const nextSong = playlist[currentIndex + 1]
-        setCurrent(nextSong)
-        if (isPlaying && audioRef.current) {
-          setTimeout(() => {
-            audioRef.current?.play().catch(() => {
-              setMessage('Could not auto-play next track')
-            })
-            if (!rafRef.current) {
-              animateBackground()
-            }
-          }, 100)
-        }
-      } else {
-        // Wrap around to beginning
-        if (playlist.length > 0) {
-          setCurrent(playlist[0])
-          if (isPlaying && audioRef.current) {
-            setTimeout(() => {
-              audioRef.current?.play().catch(() => {
-                setMessage('Could not auto-play next track')
-              })
-              if (!rafRef.current) {
-                animateBackground()
-              }
-            }, 100)
-          }
-        }
+  const playSongNow = async (song: Song) => {
+    const audio = audioRef.current
+    if (!audio) return
+    const requestId = ++playRequestIdRef.current
+
+    isChangingSongRef.current = true
+    autoPlayPendingRef.current = false
+    skipCurrentSyncRef.current = false
+
+    try {
+      audio.pause()
+      audio.currentTime = 0
+
+      const nextSrc = new URL(toPlayableUrl(song.audio_url), window.location.href).href
+      audio.src = nextSrc
+      audio.load()
+      audio.playbackRate = song.pitch
+
+      setCurrent(song)
+      setCurrentTime(0)
+      setIsPlaying(false)
+      setMessage(`Loading: ${song.title}...`)
+
+      await audio.play()
+
+      // Ignore outdated async completions
+      if (requestId !== playRequestIdRef.current) {
+        return
       }
-    } else {
-      // Use backend endpoint
-      postState('/player/next')
+
+      setMessage('Playback running')
+      if (!rafRef.current) {
+        animateBackground()
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      setMessage(`Could not play: ${msg}`)
+      throw error
+    } finally {
+      isChangingSongRef.current = false
     }
   }
 
-  const playPrevious = () => {
-    if (selectedPlaylist) {
-      // If a playlist is loaded, navigate locally
-      if (currentIndex > 0) {
-        const previousSong = playlist[currentIndex - 1]
-        setCurrent(previousSong)
-        if (isPlaying && audioRef.current) {
-          setTimeout(() => {
-            audioRef.current?.play().catch(() => {
-              setMessage('Could not auto-play previous track')
-            })
-            if (!rafRef.current) {
-              animateBackground()
-            }
-          }, 100)
-        }
-      } else {
-        // Wrap around to end
-        if (playlist.length > 0) {
-          setCurrent(playlist[playlist.length - 1])
-          if (isPlaying && audioRef.current) {
-            setTimeout(() => {
-              audioRef.current?.play().catch(() => {
-                setMessage('Could not auto-play previous track')
-              })
-              if (!rafRef.current) {
-                animateBackground()
-              }
-            }, 100)
-          }
-        }
+  const playWithAnalyzerFallback = async (song: Song) => {
+    await playSongNow(song)
+  }
+
+  const playFirstAvailableFrom = async (
+    startIndex: number,
+    direction: 1 | -1 = 1,
+    sourceSongs?: Song[],
+  ): Promise<boolean> => {
+    const songs = sourceSongs ?? playlist
+
+    if (songs.length === 0) {
+      return false
+    }
+
+    for (let attempt = 0; attempt < songs.length; attempt += 1) {
+      const idx = (startIndex + attempt * direction + songs.length) % songs.length
+      const candidate = songs[idx]
+      try {
+        await playWithAnalyzerFallback(candidate)
+        return true
+      } catch {
+        // Try next candidate
       }
-    } else {
-      // Use backend endpoint
-      postState('/player/previous')
+    }
+
+    setMessage('No playable songs in this list')
+
+    if (audioRef.current) {
+      try {
+        audioRef.current.pause()
+        audioRef.current.currentTime = 0
+        audioRef.current.removeAttribute('src')
+        audioRef.current.load()
+      } catch {
+        // ignore
+      }
+    }
+
+    isChangingSongRef.current = false
+    autoPlayPendingRef.current = false
+    skipCurrentSyncRef.current = false
+    return false
+  }
+
+  const probeSongDuration = (audioUrl: string): Promise<number> => {
+    return new Promise((resolve) => {
+      const audio = document.createElement('audio')
+      const src = toPlayableUrl(audioUrl)
+      let done = false
+
+      const cleanup = () => {
+        audio.removeEventListener('loadedmetadata', onLoaded)
+        audio.removeEventListener('error', onError)
+        audio.src = ''
+      }
+
+      const finish = (value: number) => {
+        if (done) return
+        done = true
+        cleanup()
+        resolve(value)
+      }
+
+      const onLoaded = () => finish(audio.duration)
+      const onError = () => finish(0)
+
+      audio.preload = 'metadata'
+      audio.addEventListener('loadedmetadata', onLoaded)
+      audio.addEventListener('error', onError)
+      audio.src = src
+
+      setTimeout(() => finish(0), 8000)
+    })
+  }
+
+  const playNext = async () => {
+    if (playlist.length === 0) {
+      setMessage('No songs available')
+      return
+    }
+
+    if (currentIndex < 0) {
+      const ok = await playFirstAvailableFrom(0, 1)
+      if (!ok) {
+        setMessage('Could not play next track')
+      }
+      return
+    }
+
+    if (currentIndex < playlist.length - 1) {
+      const ok = await playFirstAvailableFrom(currentIndex + 1, 1)
+      if (!ok) {
+        setMessage('Could not play next track')
+      }
+      return
+    }
+
+    const ok = await playFirstAvailableFrom(0, 1)
+    if (!ok) {
+      setMessage('Could not play next track')
+    }
+  }
+
+  const playPrevious = async () => {
+    if (playlist.length === 0) {
+      setMessage('No songs available')
+      return
+    }
+
+    if (currentIndex < 0) {
+      const ok = await playFirstAvailableFrom(playlist.length - 1, -1)
+      if (!ok) {
+        setMessage('Could not play previous track')
+      }
+      return
+    }
+
+    if (currentIndex > 0) {
+      const ok = await playFirstAvailableFrom(currentIndex - 1, -1)
+      if (!ok) {
+        setMessage('Could not play previous track')
+      }
+      return
+    }
+
+    const ok = await playFirstAvailableFrom(playlist.length - 1, -1)
+    if (!ok) {
+      setMessage('Could not play previous track')
     }
   }
 
@@ -390,18 +472,6 @@ function App() {
         }
       }
       
-      // Auto-play the new song if we were already playing
-      if (current && isPlaying && audioRef.current) {
-        setTimeout(() => {
-          audioRef.current?.play().catch(() => {
-            setMessage('Could not auto-play next track')
-          })
-          // Restart visualizer animation for the new track
-          if (!rafRef.current) {
-            animateBackground()
-          }
-        }, 100)
-      }
     } catch (error) {
       console.error('Error posting state:', error)
       setMessage('Network error')
@@ -409,21 +479,29 @@ function App() {
   }
 
   const setupAudioAnalyzer = () => {
+    if (!ENABLE_AUDIO_ANALYZER) {
+      return
+    }
+
     if (!audioRef.current || ctxRef.current) {
       return
     }
 
-    const audioContext = new window.AudioContext()
-    const analyser = audioContext.createAnalyser()
-    analyser.fftSize = 256
-    analyser.smoothingTimeConstant = 0.8
+    try {
+      const audioContext = new window.AudioContext()
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.8
 
-    const source = audioContext.createMediaElementSource(audioRef.current)
-    source.connect(analyser)
-    analyser.connect(audioContext.destination)
+      const source = audioContext.createMediaElementSource(audioRef.current)
+      source.connect(analyser)
+      analyser.connect(audioContext.destination)
 
-    ctxRef.current = audioContext
-    analyserRef.current = analyser
+      ctxRef.current = audioContext
+      analyserRef.current = analyser
+    } catch {
+      analyserRef.current = null
+    }
   }
 
   const stopVisualizerAnimation = () => {
@@ -438,9 +516,8 @@ function App() {
     if (!canvas || !ctx) return
     
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    // window.innerWidth includes the scrollbar, which is what we need
-    const visualWidth = window.innerWidth
-    const visualHeight = window.innerHeight
+    const visualWidth = document.documentElement.clientWidth
+    const visualHeight = document.documentElement.clientHeight
     
     canvas.width = Math.floor(visualWidth * dpr)
     canvas.height = Math.floor(visualHeight * dpr)
@@ -448,13 +525,18 @@ function App() {
     canvas.style.height = `${visualHeight}px`
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     
-    // Static gradient (initial state)
-    const gradient = ctx.createLinearGradient(0, 0, visualWidth, visualHeight)
-    gradient.addColorStop(0, '#0a0e27')
-    gradient.addColorStop(0.25, '#1a0033')
-    gradient.addColorStop(0.5, '#1a0a40')
-    gradient.addColorStop(0.75, '#0d3b66')
-    gradient.addColorStop(1, '#0a0e27')
+    // Static gradient (idle state)
+    const gradient = ctx.createRadialGradient(
+      visualWidth * 0.5,
+      visualHeight * 0.55,
+      20,
+      visualWidth * 0.5,
+      visualHeight * 0.55,
+      Math.max(visualWidth, visualHeight) * 0.8,
+    )
+    gradient.addColorStop(0, 'rgba(64, 84, 170, 0.28)')
+    gradient.addColorStop(0.45, 'rgba(26, 10, 64, 0.45)')
+    gradient.addColorStop(1, 'rgba(2, 6, 23, 0.94)')
     
     ctx.fillStyle = gradient
     ctx.fillRect(0, 0, visualWidth, visualHeight)
@@ -463,7 +545,7 @@ function App() {
   const animateBackground = () => {
     const canvas = canvasRef.current
     const analyser = analyserRef.current
-    if (!canvas || !analyser) {
+    if (!canvas) {
       return
     }
 
@@ -473,9 +555,8 @@ function App() {
     }
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    // window.innerWidth includes the scrollbar, which is what we need
-    const visualWidth = window.innerWidth
-    const visualHeight = window.innerHeight
+    const visualWidth = document.documentElement.clientWidth
+    const visualHeight = document.documentElement.clientHeight
     
     canvas.width = Math.floor(visualWidth * dpr)
     canvas.height = Math.floor(visualHeight * dpr)
@@ -483,11 +564,29 @@ function App() {
     canvas.style.height = `${visualHeight}px`
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-    const bufferLength = analyser.frequencyBinCount
+    const bufferLength = analyser ? analyser.frequencyBinCount : 96
     const dataArray = new Uint8Array(bufferLength)
 
     const draw = () => {
-      analyser.getByteFrequencyData(dataArray)
+      if (analyser) {
+        analyser.getByteFrequencyData(dataArray)
+      } else {
+        const t = performance.now() / 1000
+        const mediaTime = audioRef.current?.currentTime || t
+        const beatPhase = mediaTime * (1.7 + volumeRef.current * 1.4) * Math.PI
+        const beat = isPlayingRef.current ? (Math.sin(beatPhase) + 1) * 0.5 : 0.08
+        const amp = isPlayingRef.current ? 65 + beat * 135 : 18
+
+        for (let i = 0; i < bufferLength; i += 1) {
+          const wave =
+            Math.sin(t * 2.4 + i * 0.19) +
+            Math.sin(t * 1.1 + i * 0.13 + beatPhase * 0.35) +
+            Math.cos(t * 0.8 + i * 0.07)
+
+          const v = 42 + wave * amp * (0.4 + volumeRef.current * 0.6)
+          dataArray[i] = Math.max(0, Math.min(255, Math.floor(v)))
+        }
+      }
       waveformDataRef.current = new Uint8Array(dataArray)
 
       const avg = dataArray.reduce((sum, value) => sum + value, 0) / bufferLength
@@ -548,23 +647,42 @@ function App() {
 
     if (audioRef.current) {
       try {
-        // Wait for canplay event before playing
-        const canPlayPromise = new Promise((resolve) => {
-          const handler = () => {
-            audioRef.current?.removeEventListener('canplay', handler)
-            resolve(true)
-          }
-          audioRef.current?.addEventListener('canplay', handler)
-          // Timeout after 5 seconds
-          setTimeout(resolve, 5000)
-        })
+        if (!audioRef.current.src || audioRef.current.src.trim() === '') {
+          setMessage('No audio source loaded for current song')
+          return
+        }
 
-        await canPlayPromise
-        await audioRef.current.play()
+        const audio = audioRef.current
+        if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+          await audio.play()
+        } else {
+          await new Promise<void>((resolve, reject) => {
+            const onCanPlay = () => {
+              audio.removeEventListener('canplay', onCanPlay)
+              audio.removeEventListener('error', onError)
+              resolve()
+            }
+            const onError = () => {
+              audio.removeEventListener('canplay', onCanPlay)
+              audio.removeEventListener('error', onError)
+              reject(new Error('Audio failed while loading'))
+            }
+
+            audio.addEventListener('canplay', onCanPlay, { once: true })
+            audio.addEventListener('error', onError, { once: true })
+            setTimeout(() => {
+              audio.removeEventListener('canplay', onCanPlay)
+              audio.removeEventListener('error', onError)
+              resolve()
+            }, 1200)
+          })
+          await audio.play()
+        }
         setMessage('Playback running')
       } catch (error) {
         console.error('Playback error:', error)
-        setMessage(`Could not play: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        const src = audioRef.current.currentSrc || audioRef.current.src || 'none'
+        setMessage(`Could not play: ${error instanceof Error ? error.message : 'Unknown error'} | src: ${src}`)
       }
     }
     if (!rafRef.current) {
@@ -604,11 +722,84 @@ function App() {
   }
 
   useEffect(() => {
-    refreshState().catch(() => setMessage('Could not load API'))
-    loadLibrary().catch(() => setMessage('Could not load library'))
+    fetch(`${API_BASE}/playlist/select-songs`, { method: 'POST' })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Could not load songs')
+        }
+        const data = (await response.json()) as PlaylistState
+        setPlaylist(data.songs || [])
+        playlistRef.current = data.songs || []
+        setCurrent(data.current || null)
+      })
+      .catch(() => refreshState().catch(() => setMessage('Could not load API')))
     // Initialize static background
     stopVisualizerAnimation()
   }, [])
+
+  useEffect(() => {
+    const pendingSongs = playlist.filter(
+      (song) => song.audio_url.startsWith('/') && (!song.duration || song.duration === '00:00'),
+    )
+    if (pendingSongs.length === 0) {
+      return
+    }
+
+    let cancelled = false
+
+    const hydrateDurations = async () => {
+      const updates = new Map<string, string>()
+      for (const song of pendingSongs) {
+        const seconds = await probeSongDuration(song.audio_url)
+        if (seconds > 0 && Number.isFinite(seconds)) {
+          updates.set(song.audio_url, formatTime(seconds))
+        }
+      }
+
+      if (cancelled || updates.size === 0) {
+        return
+      }
+
+      setPlaylist((prev) =>
+        prev.map((song) => {
+          const nextDuration = updates.get(song.audio_url)
+          if (!nextDuration) return song
+          if (song.duration && song.duration !== '00:00') return song
+          return { ...song, duration: nextDuration }
+        }),
+      )
+
+      setCurrent((prev) => {
+        if (!prev) return prev
+        const nextDuration = updates.get(prev.audio_url)
+        if (!nextDuration) return prev
+        return { ...prev, duration: nextDuration }
+      })
+    }
+
+    hydrateDurations().catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [playlist])
+
+  useEffect(() => {
+    if (!current || !duration || !Number.isFinite(duration) || duration <= 0) {
+      return
+    }
+
+    const formatted = formatTime(duration)
+    if (current.duration !== formatted) {
+      setCurrent((prev) => (prev ? { ...prev, duration: formatted } : prev))
+      setPlaylist((prev) =>
+        prev.map((song) =>
+          song.audio_url === current.audio_url && song.audio_url.startsWith('/')
+            ? { ...song, duration: formatted }
+            : song,
+        ),
+      )
+    }
+  }, [duration, current])
 
   useEffect(() => {
     if (audioRef.current) {
@@ -621,14 +812,29 @@ function App() {
     if (!audioRef.current || !current) {
       return
     }
+
+    if (skipCurrentSyncRef.current) {
+      audioRef.current.playbackRate = current.pitch
+      setLocalPitch(current.pitch)
+      return
+    }
+
+    const isAutoPlayTransition = autoPlayPendingRef.current
     const nextSrc = toPlayableUrl(current.audio_url)
-    if (audioRef.current.src !== nextSrc) {
-      audioRef.current.src = nextSrc
+    const resolvedNextSrc = new URL(nextSrc, window.location.href).href
+    const currentSrc = audioRef.current.currentSrc || audioRef.current.src
+    if (currentSrc !== resolvedNextSrc) {
+      audioRef.current.src = resolvedNextSrc
       audioRef.current.load()
-      // Don't stop the visualizer animation here - let it continue
+      if (!isAutoPlayTransition) {
+        setIsPlaying(false)
+        setCurrentTime(0)
+        setMessage('Track ready. Press Play.')
+      }
     }
     audioRef.current.playbackRate = current.pitch
     setLocalPitch(current.pitch)
+
   }, [current])
 
   useEffect(() => {
@@ -637,16 +843,54 @@ function App() {
       return
     }
 
-    const onError = () => setMessage('Audio failed to load. Check URL format or server access.')
-    const onCanPlay = () => {
-      setMessage('Track ready. Press Play.')
-      setDuration(audio.duration)
+    const onError = () => {
+      const songs = playlistRef.current
+      if (!songs || songs.length === 0) {
+        setMessage('Audio failed to load. No songs available.')
+        return
+      }
+
+      setMessage('Audio failed to load. Trying next available track...')
+      const idx = currentIndexRef.current
+      const startIndex = idx >= 0 && idx < songs.length - 1 ? idx + 1 : 0
+      playFirstAvailableFrom(startIndex, 1, songs).catch(() => {
+        setMessage('Audio failed to load. Check URL format or server access.')
+      })
     }
-    const onPlay = () => setIsPlaying(true)
-    const onPause = () => setIsPlaying(false)
-    const onEnded = () => setIsPlaying(false)
+    const onCanPlay = () => {
+      if (!autoPlayPendingRef.current && !isPlaying) {
+        setMessage('Track ready. Press Play.')
+      }
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration)
+      }
+    }
+    const onPlay = () => {
+      setIsPlaying(true)
+      isPlayingRef.current = true
+    }
+    const onPause = () => {
+      setIsPlaying(false)
+      isPlayingRef.current = false
+    }
+    const onEnded = () => {
+      setIsPlaying(false)
+      isPlayingRef.current = false
+      const songs = playlistRef.current
+      if (songs.length > 0) {
+        const idx = currentIndexRef.current
+        const startIndex = idx >= 0 && idx < songs.length - 1 ? idx + 1 : 0
+        playFirstAvailableFrom(startIndex, 1, songs).catch(() => {
+          setMessage('Could not continue playlist')
+        })
+      }
+    }
     const onTimeUpdate = () => setCurrentTime(audio.currentTime)
-    const onLoadedMetadata = () => setDuration(audio.duration)
+    const onLoadedMetadata = () => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration)
+      }
+    }
 
     audio.addEventListener('error', onError)
     audio.addEventListener('canplay', onCanPlay)
@@ -666,6 +910,18 @@ function App() {
       audio.removeEventListener('loadedmetadata', onLoadedMetadata)
     }
   }, [])
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying
+    if (isPlaying && !rafRef.current) {
+      animateBackground()
+    }
+  }, [isPlaying])
+
+  useEffect(() => {
+    playlistRef.current = playlist
+    currentIndexRef.current = currentIndex
+  }, [playlist, currentIndex])
 
   useEffect(() => {
     return () => {
@@ -804,9 +1060,9 @@ function App() {
           </div>
 
           <div className="row">
-            <button onClick={playPrevious}><FaStepBackward /> Previous</button>
+            <button onClick={() => playPrevious().catch(() => undefined)}><FaStepBackward /> Previous</button>
             <button onClick={togglePlayPause}>{isPlaying ? <><FaPause /> Pause</> : <><FaPlay /> Play</>}</button>
-            <button onClick={playNext}>Next <FaStepForward /></button>
+            <button onClick={() => playNext().catch(() => undefined)}>Next <FaStepForward /></button>
           </div>
 
           <div className="pitch-slider-container">
@@ -900,18 +1156,18 @@ function App() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         <section className="panel list-panel">
-          <h2>Playlist ({playlist.length})</h2>
+          <h2>{selectedPlaylist ? `${selectedPlaylist} (${playlist.length})` : `Songs (${playlist.length})`}</h2>
           <ul>
             {playlist.map((song, index) => (
-              <li key={`${song.title}-${song.artist}-${index}`} className={song.title === current?.title ? 'active' : ''} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.8rem', gap: '0.5rem' }}>
+              <li key={`${song.title}-${song.artist}-${index}`} className={song.audio_url === current?.audio_url ? 'active song-row-active' : 'song-row'} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.8rem', gap: '0.5rem' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <strong>{index + 1}. {song.title}</strong>
+                  <strong style={{ display: 'block' }}>{index + 1}. {song.title}</strong>
                   <small>
                     {song.artist} | {song.duration} | x{song.pitch.toFixed(2)}
                   </small>
                 </div>
                 <div className="row compact" style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
-                  {selectedPlaylist && index > 0 && (
+                  {index > 0 && (
                     <button
                       onClick={() => moveSongInPlaylist(index, index - 1)}
                       title="Move up"
@@ -923,7 +1179,7 @@ function App() {
                       ↑
                     </button>
                   )}
-                  {selectedPlaylist && index < playlist.length - 1 && (
+                  {index < playlist.length - 1 && (
                     <button
                       onClick={() => moveSongInPlaylist(index, index + 1)}
                       title="Move down"
@@ -937,32 +1193,28 @@ function App() {
                   )}
                   <button
                     onClick={() => {
-                      setCurrent(song)
-                      if (!isPlaying) {
-                        beginPlayback()
-                      }
+                      playWithAnalyzerFallback(song).catch(() => undefined)
                     }}
                     title="Play"
                     style={{
                       padding: '0.4rem 0.6rem',
                       fontSize: '0.85rem',
+                      minWidth: '4.5rem',
                     }}
                   >
                     <FaPlay /> Play
                   </button>
-                  {selectedPlaylist && (
-                    <button
-                      className="danger"
-                      onClick={() => removeSongFromPlaylist(song.title)}
-                      title="Remove from playlist"
-                      style={{
-                        padding: '0.4rem 0.6rem',
-                        fontSize: '0.85rem',
-                      }}
-                    >
-                      <FaTrash />
-                    </button>
-                  )}
+                  <button
+                    className="danger"
+                    onClick={() => removeSongFromPlaylist(index, song.title)}
+                    title="Remove from songs"
+                    style={{
+                      padding: '0.4rem 0.6rem',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <FaTrash />
+                  </button>
                 </div>
               </li>
             ))}
@@ -1077,30 +1329,18 @@ function App() {
 
                     const data = await response.json() as { songs: Song[]; songs_added: number }
                     
-                    // Add uploaded songs to the current playlist (if one is selected)
-                    if (selectedPlaylist && data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
-                      for (const song of data.songs) {
-                        await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}/add-song`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify(song)
-                        })
-                      }
-                      // Refresh playlist
-                      const refreshResponse = await fetch(`${API_BASE}/playlists/${encodeURIComponent(selectedPlaylist)}`)
+                    if (data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
+                      setSelectedPlaylist(null)
+                      const refreshResponse = await fetch(`${API_BASE}/playlist/select-songs`, { method: 'POST' })
                       if (refreshResponse.ok) {
-                        const playlistData = await refreshResponse.json() as { songs: Song[] }
-                        setPlaylist(playlistData.songs)
-                        if (playlistData.songs.length > 0 && !current) {
-                          setCurrent(playlistData.songs[0])
+                        const listData = await refreshResponse.json() as PlaylistState
+                        setPlaylist(Array.isArray(listData.songs) ? listData.songs : [])
+                        if (!current && listData.songs && listData.songs.length > 0) {
+                          setCurrent(listData.songs[0])
                         }
                       }
                       setLocalFiles([])
-                      setMessage(`Successfully uploaded ${data.songs_added} file(s) to playlist`)
-                    } else {
-                      // If no playlist selected, just clear the files and show success
-                      setLocalFiles([])
-                      setMessage(`Successfully uploaded ${data.songs_added} file(s) to library`)
+                      setMessage(`Successfully uploaded ${data.songs_added} file(s) to songs`)
                     }
                   } catch (error) {
                     const errorMsg = error instanceof Error ? error.message : String(error)
@@ -1121,143 +1361,7 @@ function App() {
            </section>
          </div>
 
-         <section className="panel queue-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-           {/* Library Section */}
-           <div>
-             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-               <h2>My Library</h2>
-               <button
-                 onClick={() => setShowLibrary(!showLibrary)}
-                 style={{
-                   background: 'transparent',
-                   border: 'none',
-                   color: 'var(--text)',
-                   cursor: 'pointer',
-                   fontSize: '1rem',
-                 }}
-               >
-                 {showLibrary ? <FaTimes /> : <FaMusic />}
-               </button>
-             </div>
-
-             {showLibrary && (
-               <>
-                 {selectedPlaylist && (
-                   <div style={{ marginBottom: '1rem', padding: '0.8rem', background: 'rgba(102, 126, 234, 0.1)', borderRadius: '4px' }}>
-                     <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                       <input
-                         type="text"
-                         placeholder="Paste YouTube URL..."
-                         value={youtubeImportUrl}
-                         onChange={(e) => setYoutubeImportUrl(e.target.value)}
-                         style={{
-                           flex: 1,
-                           padding: '0.5rem',
-                           background: 'rgba(102, 126, 234, 0.1)',
-                           border: '1px solid rgba(102, 126, 234, 0.3)',
-                           borderRadius: '4px',
-                           color: 'var(--text)',
-                           fontSize: '0.85rem',
-                         }}
-                       />
-                       <button
-                         onClick={importYoutubeToPlaylist}
-                         disabled={isImportingYoutube || !youtubeImportUrl.trim()}
-                         style={{
-                           background: isImportingYoutube ? 'rgba(255, 0, 0, 0.3)' : 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
-                           border: 'none',
-                           color: 'white',
-                           padding: '0.5rem 0.8rem',
-                           borderRadius: '4px',
-                           cursor: isImportingYoutube ? 'not-allowed' : 'pointer',
-                           fontSize: '0.85rem',
-                           display: 'flex',
-                           alignItems: 'center',
-                           gap: '0.3rem',
-                         }}
-                       >
-                         <FaYoutube /> {isImportingYoutube ? '...' : 'Import'}
-                       </button>
-                     </div>
-                   </div>
-                 )}
-
-                 {librarySongs.length === 0 ? (
-                   <p style={{ color: 'var(--muted)', margin: 0, marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                     Library is empty. Upload or import songs to get started.
-                   </p>
-                 ) : (
-                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem', maxHeight: '250px', overflowY: 'auto' }}>
-                     {librarySongs.map((song) => (
-                       <div
-                         key={song.audio_url}
-                         style={{
-                           padding: '0.6rem',
-                           background: 'rgba(30, 30, 50, 0.6)',
-                           borderRadius: '4px',
-                           display: 'flex',
-                           justifyContent: 'space-between',
-                           alignItems: 'center',
-                           gap: '0.5rem',
-                           fontSize: '0.8rem',
-                         }}
-                       >
-                         <div style={{ flex: 1, minWidth: 0 }}>
-                           <div style={{ color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                             {song.title}
-                           </div>
-                           <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
-                             {song.artist}
-                           </div>
-                         </div>
-                         <button
-                           onClick={() => {
-                             setCurrent(song)
-                             if (!isPlaying) {
-                               beginPlayback()
-                             }
-                           }}
-                           title="Play now"
-                           style={{
-                             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                             border: 'none',
-                             color: 'white',
-                             padding: '0.4rem 0.6rem',
-                             borderRadius: '3px',
-                             cursor: 'pointer',
-                             display: 'flex',
-                             alignItems: 'center',
-                             justifyContent: 'center',
-                             fontSize: '0.7rem',
-                           }}
-                         >
-                           <FaPlay size={10} />
-                         </button>
-                         {selectedPlaylist && (
-                           <button
-                             onClick={() => addLibrarySongToPlaylist(song)}
-                             title="Add to current playlist"
-                             style={{
-                               background: 'rgba(76, 175, 80, 0.3)',
-                               border: '1px solid rgba(76, 175, 80, 0.6)',
-                               color: '#4caf50',
-                               padding: '0.4rem 0.6rem',
-                               borderRadius: '3px',
-                               cursor: 'pointer',
-                               fontSize: '0.7rem',
-                             }}
-                           >
-                             <FaPlus size={10} />
-                           </button>
-                         )}
-                       </div>
-                     ))}
-                   </div>
-                 )}
-               </>
-             )}
-           </div>
-
+           <section className={`panel queue-panel ${selectedPlaylist ? 'queue-panel-compact' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: selectedPlaylist ? '0.8rem' : '1.5rem' }}>
            {/* Up Next Section */}
            <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '1rem' }}>
              <h2>Up Next</h2>
@@ -1265,38 +1369,26 @@ function App() {
                <p style={{ color: 'var(--muted)', margin: 0, marginTop: '0.5rem' }}>
                  No songs queued. Add more songs or navigate the playlist.
                </p>
-             ) : (
-               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.5rem' }}>
-                  {queueSongs.map((song, index) => (
-                    <div
-                      key={`${song.title}-${index}`}
-                      className="queue-item"
-                      onClick={() => {
-                        // If a playlist is loaded, handle selection locally
-                        if (selectedPlaylist) {
-                          setCurrent(song)
-                          // Auto-play if currently playing
-                          if (isPlaying && audioRef.current) {
-                            setTimeout(() => {
-                              audioRef.current?.play().catch(() => {
-                                setMessage('Could not auto-play next track')
-                              })
-                              // Restart visualizer animation for the new track
-                              if (!rafRef.current) {
-                                animateBackground()
-                              }
-                            }, 100)
-                          }
+              ) : (
+                <div className="queue-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginTop: '0.45rem' }}>
+                   {queueSongs.map((song, index) => (
+                     <div
+                       key={`${song.title}-${index}`}
+                       className={`queue-item ${selectedPlaylist ? 'queue-item-compact' : ''}`}
+                       onClick={() => {
+                       // If a playlist is loaded, handle selection locally
+                       if (selectedPlaylist) {
+                          playWithAnalyzerFallback(song).catch(() => undefined)
                         } else {
                           // Otherwise use backend endpoint
                           postState(`/player/select/${encodeURIComponent(song.title)}`)
                         }
                       }}
                     >
-                      <div className="queue-item-text">
-                        <p className="queue-item-title">{index + 1}. {song.title}</p>
-                        <p className="queue-item-artist">{song.artist}</p>
-                      </div>
+                       <div className="queue-item-text">
+                         <p className="queue-item-title">{index + 1}. {song.title}</p>
+                         <p className="queue-item-artist">{song.artist}</p>
+                       </div>
                       <div className="queue-item-duration">{song.duration}</div>
                     </div>
                   ))}
