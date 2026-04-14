@@ -118,6 +118,9 @@ function App() {
       autoPlayPendingRef.current = false
       skipCurrentSyncRef.current = false
       isChangingSongRef.current = false
+      currentPositionRef.current = -1
+      activeIndexRef.current = -1
+      currentIndexRef.current = -1
       if (audioRef.current) {
         audioRef.current.pause()
         audioRef.current.removeAttribute('src')
@@ -176,6 +179,9 @@ function App() {
       autoPlayPendingRef.current = false
       skipCurrentSyncRef.current = false
       isChangingSongRef.current = false
+      currentPositionRef.current = -1
+      activeIndexRef.current = -1
+      currentIndexRef.current = -1
       if (audioRef.current) {
         audioRef.current.pause()
         audioRef.current.removeAttribute('src')
@@ -316,6 +322,7 @@ function App() {
         typeof playlistIndex === 'number' ? playlistIndex : resolveCurrentIndex(songsContext, song)
       activeIndexRef.current = resolvedIndex
       currentPositionRef.current = resolvedIndex
+      currentIndexRef.current = resolvedIndex
       setCurrentTime(0)
       setIsPlaying(false)
       setMessage(`Loading: ${song.title}...`)
@@ -431,12 +438,10 @@ function App() {
     }
 
     let safeCurrentIndex = currentPositionRef.current
-    if (
-      safeCurrentIndex < 0 ||
-      safeCurrentIndex >= songs.length ||
-      !current ||
-      songs[safeCurrentIndex]?.audio_url !== current.audio_url
-    ) {
+    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
+      safeCurrentIndex = currentIndexRef.current
+    }
+    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
       safeCurrentIndex = resolveCurrentIndex(songs, current)
     }
 
@@ -462,12 +467,10 @@ function App() {
     }
 
     let safeCurrentIndex = currentPositionRef.current
-    if (
-      safeCurrentIndex < 0 ||
-      safeCurrentIndex >= songs.length ||
-      !current ||
-      songs[safeCurrentIndex]?.audio_url !== current.audio_url
-    ) {
+    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
+      safeCurrentIndex = currentIndexRef.current
+    }
+    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
       safeCurrentIndex = resolveCurrentIndex(songs, current)
     }
 
@@ -983,21 +986,7 @@ function App() {
     playlistRef.current = playlist
     currentIndexRef.current = currentIndex
     if (currentIndex >= 0) {
-      const currentAtPosition = playlist[currentPositionRef.current]
-      if (
-        currentPositionRef.current < 0 ||
-        currentPositionRef.current >= playlist.length ||
-        !currentAtPosition ||
-        currentAtPosition.audio_url !== current?.audio_url
-      ) {
-        currentPositionRef.current = currentIndex
-      }
-
-      if (activeIndexRef.current < 0 || activeIndexRef.current >= playlist.length) {
-        activeIndexRef.current = currentIndex
-      }
-    } else {
-      currentPositionRef.current = -1
+      currentPositionRef.current = currentIndex
       activeIndexRef.current = currentIndex
     }
   }, [playlist, currentIndex])
