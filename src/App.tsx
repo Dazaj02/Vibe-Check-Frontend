@@ -358,6 +358,27 @@ function App() {
     await playSongNow(song, playlistIndex, sourceSongs)
   }
 
+  const resolvePlayingIndexFromAudioElement = (songs: Song[]): number => {
+    const audio = audioRef.current
+    if (!audio) return -1
+
+    const currentSrc = (audio.currentSrc || audio.src || '').trim()
+    if (!currentSrc) return -1
+
+    for (let i = 0; i < songs.length; i += 1) {
+      try {
+        const candidateSrc = new URL(toPlayableUrl(songs[i].audio_url), window.location.href).href
+        if (candidateSrc === currentSrc) {
+          return i
+        }
+      } catch {
+        // ignore malformed candidate URL
+      }
+    }
+
+    return -1
+  }
+
   const playFirstAvailableFrom = async (
     startIndex: number,
     direction: 1 | -1 = 1,
@@ -437,7 +458,10 @@ function App() {
       return
     }
 
-    let safeCurrentIndex = currentPositionRef.current
+    let safeCurrentIndex = resolvePlayingIndexFromAudioElement(songs)
+    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
+      safeCurrentIndex = currentPositionRef.current
+    }
     if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
       safeCurrentIndex = currentIndexRef.current
     }
@@ -466,7 +490,10 @@ function App() {
       return
     }
 
-    let safeCurrentIndex = currentPositionRef.current
+    let safeCurrentIndex = resolvePlayingIndexFromAudioElement(songs)
+    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
+      safeCurrentIndex = currentPositionRef.current
+    }
     if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
       safeCurrentIndex = currentIndexRef.current
     }
