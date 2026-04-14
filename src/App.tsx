@@ -369,6 +369,20 @@ function App() {
     const currentSrc = (audio.currentSrc || audio.src || '').trim()
     if (!currentSrc) return -1
 
+    try {
+      const srcUrl = new URL(currentSrc)
+      const streamedTarget = srcUrl.searchParams.get('url')
+      if (streamedTarget) {
+        const decodedTarget = decodeURIComponent(streamedTarget)
+        const directMatchIndex = songs.findIndex((song) => song.audio_url === decodedTarget)
+        if (directMatchIndex >= 0) {
+          return directMatchIndex
+        }
+      }
+    } catch {
+      // Ignore parse errors and continue fallback matching
+    }
+
     for (let i = 0; i < songs.length; i += 1) {
       try {
         const candidateSrc = new URL(toPlayableUrl(songs[i].audio_url), window.location.href).href
@@ -475,8 +489,25 @@ function App() {
 
     const nextIndex = safeCurrentIndex >= 0 ? (safeCurrentIndex + 1) % songs.length : 0
 
+    if (safeCurrentIndex >= 0 && nextIndex === safeCurrentIndex && songs.length > 1) {
+      const forcedNextIndex = (safeCurrentIndex + 1) % songs.length
+      currentPositionRef.current = forcedNextIndex
+      activeIndexRef.current = forcedNextIndex
+      currentIndexRef.current = forcedNextIndex
+      try {
+        await playSongNow(songs[forcedNextIndex], forcedNextIndex, songs)
+      } catch {
+        const ok = await playFirstAvailableFrom(forcedNextIndex, 1, songs)
+        if (!ok) {
+          setMessage('Could not play next track')
+        }
+      }
+      return
+    }
+
     currentPositionRef.current = nextIndex
     activeIndexRef.current = nextIndex
+    currentIndexRef.current = nextIndex
     try {
       await playSongNow(songs[nextIndex], nextIndex, songs)
     } catch {
@@ -508,8 +539,25 @@ function App() {
     const previousIndex =
       safeCurrentIndex >= 0 ? (safeCurrentIndex - 1 + songs.length) % songs.length : songs.length - 1
 
+    if (safeCurrentIndex >= 0 && previousIndex === safeCurrentIndex && songs.length > 1) {
+      const forcedPreviousIndex = (safeCurrentIndex - 1 + songs.length) % songs.length
+      currentPositionRef.current = forcedPreviousIndex
+      activeIndexRef.current = forcedPreviousIndex
+      currentIndexRef.current = forcedPreviousIndex
+      try {
+        await playSongNow(songs[forcedPreviousIndex], forcedPreviousIndex, songs)
+      } catch {
+        const ok = await playFirstAvailableFrom(forcedPreviousIndex, -1, songs)
+        if (!ok) {
+          setMessage('Could not play previous track')
+        }
+      }
+      return
+    }
+
     currentPositionRef.current = previousIndex
     activeIndexRef.current = previousIndex
+    currentIndexRef.current = previousIndex
     try {
       await playSongNow(songs[previousIndex], previousIndex, songs)
     } catch {
@@ -823,6 +871,17 @@ function App() {
         setPlaylist(data.songs || [])
         playlistRef.current = data.songs || []
         setCurrent(data.current || null)
+        const initialSongs = data.songs || []
+        if (initialSongs.length > 0) {
+          const idx = resolveCurrentIndex(initialSongs, data.current || null)
+          currentPositionRef.current = idx
+          activeIndexRef.current = idx
+          currentIndexRef.current = idx
+        } else {
+          currentPositionRef.current = -1
+          activeIndexRef.current = -1
+          currentIndexRef.current = -1
+        }
       })
       .catch(() => refreshState().catch(() => setMessage('Could not load API')))
     // Initialize static background
