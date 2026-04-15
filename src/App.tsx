@@ -1143,7 +1143,7 @@ function App() {
 
   return (
     <>
-      <audio ref={audioRef} style={{ display: 'none' }} />
+      <audio ref={audioRef} style={{ display: 'none' }} crossOrigin="anonymous" />
       <canvas ref={canvasRef} className="visualizer-bg" style={{ pointerEvents: 'none' }} />
       
       {currentPage === 'playlists' ? (
