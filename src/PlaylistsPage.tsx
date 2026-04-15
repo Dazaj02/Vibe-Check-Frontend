@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { FaPlus, FaTrash, FaArrowLeft, FaMusic, FaClock, FaDownload, FaYoutube, FaPlay } from 'react-icons/fa'
 
 type Song = {
+  id: string
   title: string
   artist: string
   duration: string

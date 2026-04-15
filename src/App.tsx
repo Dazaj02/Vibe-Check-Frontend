@@ -3,6 +3,7 @@ import { PlaylistsPage } from './PlaylistsPage'
 import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus } from 'react-icons/fa'
 
 type Song = {
+  id: string
   title: string
   artist: string
   duration: string
@@ -13,6 +14,8 @@ type Song = {
 type PlaylistState = {
   songs: Song[]
   current: Song | null
+  currentIndex?: number
+  playlistName?: string | null
 }
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
@@ -64,6 +67,24 @@ function App() {
   const listLoadRequestRef = useRef(0)
   const playRequestIdRef = useRef(0)
 
+  const applyServerState = (data: PlaylistState & { message?: string }) => {
+    const nextSongs = Array.isArray(data.songs) ? data.songs : []
+    setPlaylist(nextSongs)
+    playlistRef.current = nextSongs
+    setCurrent(data.current || null)
+
+    if (typeof data.currentIndex === 'number') {
+      currentPositionRef.current = data.currentIndex
+      activeIndexRef.current = data.currentIndex
+      currentIndexRef.current = data.currentIndex
+    } else {
+      const fallbackIndex = resolveCurrentIndex(nextSongs, data.current || null)
+      currentPositionRef.current = fallbackIndex
+      activeIndexRef.current = fallbackIndex
+      currentIndexRef.current = fallbackIndex
+    }
+  }
+
   const resolveCurrentIndex = (songs: Song[], currentSong: Song | null): number => {
     if (!currentSong) return -1
 
@@ -108,8 +129,7 @@ function App() {
       if (!response.ok) throw new Error('Failed to fetch playlist')
       const data = (await response.json()) as PlaylistState
       if (!Array.isArray(data.songs)) throw new Error('Invalid response format')
-      setPlaylist(data.songs)
-      setCurrent(data.current || null)
+      applyServerState(data)
     } catch (error) {
       console.error('Error refreshing state:', error)
       setMessage('Failed to refresh playlist')
@@ -118,6 +138,7 @@ function App() {
 
   const loadSelectedPlaylist = async (playlistName: string, songsOverride?: Song[]) => {
     try {
+      void songsOverride
       listLoadRequestRef.current += 1
       autoPlayPendingRef.current = false
       skipCurrentSyncRef.current = false
@@ -131,31 +152,20 @@ function App() {
         audioRef.current.load()
       }
 
-      let songsToLoad: Song[] = []
+      const response = await fetch(`${API_BASE}/playlist/select`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: playlistName, index: 0 }),
+      })
 
-      if (Array.isArray(songsOverride)) {
-        songsToLoad = songsOverride
-      } else {
-        const response = await fetch(`${API_BASE}/playlists/${encodeURIComponent(playlistName)}`)
-        if (!response.ok) {
-          setMessage('Failed to load playlist')
-          return
-        }
-        const playlistData = await response.json() as { name: string; songs: Song[]; total: number }
-        if (!Array.isArray(playlistData.songs)) {
-          setMessage('Invalid playlist data')
-          return
-        }
-        songsToLoad = playlistData.songs
-      }
-
-      if (!Array.isArray(songsToLoad)) {
-        setMessage('Invalid playlist data')
+      if (!response.ok) {
+        setMessage('Failed to load playlist')
         return
       }
 
-      setPlaylist(songsToLoad)
-      playlistRef.current = songsToLoad
+      const data = await response.json() as PlaylistState & { message?: string }
+      applyServerState(data)
+
       setSelectedPlaylist(playlistName)
       setCurrentTime(0)
       stopVisualizerAnimation()
@@ -164,11 +174,8 @@ function App() {
       // Cambiar al player automáticamente
       setCurrentPage('player')
 
-      if (songsToLoad.length > 0) {
-        const ok = await playFirstAvailableFrom(0, 1, songsToLoad)
-        if (!ok) {
-          setMessage('Could not start playlist playback')
-        }
+      if (data.current) {
+        await playSongNow(data.current, data.currentIndex, data.songs)
       } else {
         setCurrent(null)
       }
@@ -200,10 +207,7 @@ function App() {
       }
 
       const data = await response.json() as PlaylistState & { message?: string }
-      const nextSongs = Array.isArray(data.songs) ? data.songs : []
-      setPlaylist(nextSongs)
-      playlistRef.current = nextSongs
-      setCurrent(data.current || nextSongs[0] || null)
+      applyServerState(data)
       setSelectedPlaylist(null)
       setMessage('Showing Songs')
       setCurrentPage('playlists')
@@ -473,107 +477,42 @@ function App() {
   }
 
   const playNext = async () => {
-    const songs = playlistRef.current
-    if (songs.length === 0) {
-      setMessage('No songs available')
-      return
-    }
-
-    let safeCurrentIndex = resolvePlayingIndexFromAudioElement(songs)
-    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
-      safeCurrentIndex = currentPositionRef.current
-    }
-    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
-      safeCurrentIndex = currentIndexRef.current
-    }
-    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
-      safeCurrentIndex = resolveCurrentIndex(songs, current)
-    }
-
-    const nextIndex = safeCurrentIndex >= 0 ? (safeCurrentIndex + 1) % songs.length : 0
-    setNavDebug(
-      `NEXT list=${selectedPlaylistRef.current || '__songs__'} len=${songs.length} from=${safeCurrentIndex} to=${nextIndex} fromTitle=${safeCurrentIndex >= 0 ? songs[safeCurrentIndex].title : 'none'} toTitle=${songs[nextIndex].title}`,
-    )
-
-    if (safeCurrentIndex >= 0 && nextIndex === safeCurrentIndex && songs.length > 1) {
-      const forcedNextIndex = (safeCurrentIndex + 1) % songs.length
-      currentPositionRef.current = forcedNextIndex
-      activeIndexRef.current = forcedNextIndex
-      currentIndexRef.current = forcedNextIndex
-      try {
-        await playSongNow(songs[forcedNextIndex], forcedNextIndex, songs)
-      } catch {
-        const ok = await playFirstAvailableFrom(forcedNextIndex, 1, songs)
-        if (!ok) {
-          setMessage('Could not play next track')
-        }
-      }
-      return
-    }
-
-    currentPositionRef.current = nextIndex
-    activeIndexRef.current = nextIndex
-    currentIndexRef.current = nextIndex
     try {
-      await playSongNow(songs[nextIndex], nextIndex, songs)
-    } catch {
-      const ok = await playFirstAvailableFrom(nextIndex, 1, songs)
-      if (!ok) {
-        setMessage('Could not play next track')
+      const response = await fetch(`${API_BASE}/player/next`, { method: 'POST' })
+      if (!response.ok) {
+        const error = await response.json() as { detail?: string }
+        setMessage(error.detail || 'Could not play next track')
+        return
       }
+
+      const data = await response.json() as PlaylistState & { message?: string }
+      applyServerState(data)
+      if (data.current) {
+        await playSongNow(data.current, data.currentIndex, data.songs)
+      }
+      setNavDebug(`NEXT backend idx=${data.currentIndex ?? -1} title=${data.current?.title ?? 'none'}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not play next track')
     }
   }
 
   const playPrevious = async () => {
-    const songs = playlistRef.current
-    if (songs.length === 0) {
-      setMessage('No songs available')
-      return
-    }
-
-    let safeCurrentIndex = resolvePlayingIndexFromAudioElement(songs)
-    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
-      safeCurrentIndex = currentPositionRef.current
-    }
-    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
-      safeCurrentIndex = currentIndexRef.current
-    }
-    if (safeCurrentIndex < 0 || safeCurrentIndex >= songs.length) {
-      safeCurrentIndex = resolveCurrentIndex(songs, current)
-    }
-
-    const previousIndex =
-      safeCurrentIndex >= 0 ? (safeCurrentIndex - 1 + songs.length) % songs.length : songs.length - 1
-    setNavDebug(
-      `PREV list=${selectedPlaylistRef.current || '__songs__'} len=${songs.length} from=${safeCurrentIndex} to=${previousIndex} fromTitle=${safeCurrentIndex >= 0 ? songs[safeCurrentIndex].title : 'none'} toTitle=${songs[previousIndex].title}`,
-    )
-
-    if (safeCurrentIndex >= 0 && previousIndex === safeCurrentIndex && songs.length > 1) {
-      const forcedPreviousIndex = (safeCurrentIndex - 1 + songs.length) % songs.length
-      currentPositionRef.current = forcedPreviousIndex
-      activeIndexRef.current = forcedPreviousIndex
-      currentIndexRef.current = forcedPreviousIndex
-      try {
-        await playSongNow(songs[forcedPreviousIndex], forcedPreviousIndex, songs)
-      } catch {
-        const ok = await playFirstAvailableFrom(forcedPreviousIndex, -1, songs)
-        if (!ok) {
-          setMessage('Could not play previous track')
-        }
-      }
-      return
-    }
-
-    currentPositionRef.current = previousIndex
-    activeIndexRef.current = previousIndex
-    currentIndexRef.current = previousIndex
     try {
-      await playSongNow(songs[previousIndex], previousIndex, songs)
-    } catch {
-      const ok = await playFirstAvailableFrom(previousIndex, -1, songs)
-      if (!ok) {
-        setMessage('Could not play previous track')
+      const response = await fetch(`${API_BASE}/player/previous`, { method: 'POST' })
+      if (!response.ok) {
+        const error = await response.json() as { detail?: string }
+        setMessage(error.detail || 'Could not play previous track')
+        return
       }
+
+      const data = await response.json() as PlaylistState & { message?: string }
+      applyServerState(data)
+      if (data.current) {
+        await playSongNow(data.current, data.currentIndex, data.songs)
+      }
+      setNavDebug(`PREV backend idx=${data.currentIndex ?? -1} title=${data.current?.title ?? 'none'}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not play previous track')
     }
   }
 
@@ -597,9 +536,7 @@ function App() {
       if (typeof data === 'object' && data !== null) {
         const objData = data as Record<string, unknown>
         if ('songs' in objData && 'current' in objData) {
-          // PlaylistState response
-          setPlaylist(Array.isArray(objData.songs) ? (objData.songs as Song[]) : [])
-          setCurrent(objData.current as Song | null || null)
+          applyServerState(objData as PlaylistState & { message?: string })
         }
         if ('message' in objData) {
           setMessage(String(objData.message))
@@ -1594,7 +1531,11 @@ function App() {
                           ).catch(() => undefined)
                         } else {
                           // Otherwise use backend endpoint
-                          postState(`/player/select/${encodeURIComponent(song.title)}`)
+                          if (song.id) {
+                            postState(`/player/select-id/${encodeURIComponent(song.id)}`)
+                          } else {
+                            postState(`/player/select/${encodeURIComponent(song.title)}`)
+                          }
                         }
                       }}
                     >
