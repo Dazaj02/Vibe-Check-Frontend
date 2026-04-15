@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PlaylistsPage } from './PlaylistsPage'
-import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaSort, FaDownload, FaTrash, FaPlus } from 'react-icons/fa'
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaList, FaDownload, FaTrash, FaPlus } from 'react-icons/fa'
 
 type Song = {
   id: string
@@ -46,6 +46,8 @@ function App() {
   const [localFiles, setLocalFiles] = useState<File[]>([])
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null)
+  const [songSearchTitle, setSongSearchTitle] = useState('')
+  const [songSearchArtist, setSongSearchArtist] = useState('')
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -120,6 +122,19 @@ function App() {
     const upcoming = playlist.slice(currentIndex + 1)
     return upcoming.slice(0, compactCount)
   }, [playlist, currentIndex])
+
+  const filteredPlaylistEntries = useMemo(() => {
+    const titleQuery = songSearchTitle.trim().toLowerCase()
+    const artistQuery = songSearchArtist.trim().toLowerCase()
+
+    return playlist
+      .map((song, index) => ({ song, index }))
+      .filter(({ song }) => {
+        const titleMatches = titleQuery === '' || song.title.toLowerCase().includes(titleQuery)
+        const artistMatches = artistQuery === '' || song.artist.toLowerCase().includes(artistQuery)
+        return titleMatches && artistMatches
+      })
+  }, [playlist, songSearchTitle, songSearchArtist])
 
   const activeListName = selectedPlaylist || '__songs__'
 
@@ -1294,16 +1309,42 @@ function App() {
             >
               <FaDownload /> Download Current
             </button>
-            <button onClick={() => selectedPlaylist && postState(`/playlists/${encodeURIComponent(selectedPlaylist)}/sort`, { sortBy: 'title' })}><FaSort /> Sort by Title</button>
-            <button onClick={() => selectedPlaylist && postState(`/playlists/${encodeURIComponent(selectedPlaylist)}/sort`, { sortBy: 'artist' })}><FaSort /> Sort by Artist</button>
           </div>
         </section>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         <section className="panel list-panel">
           <h2>{selectedPlaylist ? `${selectedPlaylist} (${playlist.length})` : `Songs (${playlist.length})`}</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem', marginBottom: '0.9rem' }}>
+            <input
+              type="text"
+              placeholder="Search by title..."
+              value={songSearchTitle}
+              onChange={(e) => setSongSearchTitle(e.target.value)}
+              style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.04)', color: 'var(--text)' }}
+            />
+            <input
+              type="text"
+              placeholder="Search by artist..."
+              value={songSearchArtist}
+              onChange={(e) => setSongSearchArtist(e.target.value)}
+              style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.04)', color: 'var(--text)' }}
+            />
+            <button
+              onClick={() => {
+                setSongSearchTitle('')
+                setSongSearchArtist('')
+              }}
+              style={{ padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}
+            >
+              Clear
+            </button>
+          </div>
+          <p style={{ margin: '0 0 0.8rem 0', color: 'var(--muted)', fontSize: '0.85rem' }}>
+            Showing {filteredPlaylistEntries.length} of {playlist.length} songs
+          </p>
           <ul>
-            {playlist.map((song, index) => (
+            {filteredPlaylistEntries.map(({ song, index }) => (
               <li key={`${song.title}-${song.artist}-${index}`} className={song.audio_url === current?.audio_url ? 'active song-row-active' : 'song-row'} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.8rem', gap: '0.5rem' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <strong style={{ display: 'block' }}>{index + 1}. {song.title}</strong>
