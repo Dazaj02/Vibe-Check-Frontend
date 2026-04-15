@@ -577,7 +577,7 @@ function App() {
       const audioContext = new window.AudioContext()
       const analyser = audioContext.createAnalyser()
       analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.8
+      analyser.smoothingTimeConstant = 0.85
 
       const source = audioContext.createMediaElementSource(audioRef.current)
       source.connect(analyser)
@@ -628,6 +628,29 @@ function App() {
     ctx.fillRect(0, 0, visualWidth, visualHeight)
   }
 
+  const normalizeSpectrum = (spectrum: Uint8Array, silenceThreshold: number): Uint8Array => {
+    let highestActiveIndex = -1
+    for (let i = 0; i < spectrum.length; i += 1) {
+      if (spectrum[i] >= silenceThreshold) {
+        highestActiveIndex = i
+      }
+    }
+
+    if (highestActiveIndex < 0) {
+      return new Uint8Array(0)
+    }
+
+    const activeValues: number[] = []
+    for (let i = 0; i <= highestActiveIndex; i += 1) {
+      const value = spectrum[i]
+      if (value >= silenceThreshold) {
+        activeValues.push(value)
+      }
+    }
+
+    return Uint8Array.from(activeValues)
+  }
+
   const animateBackground = () => {
     const canvas = canvasRef.current
     const analyser = analyserRef.current
@@ -673,9 +696,16 @@ function App() {
           dataArray[i] = Math.max(0, Math.min(255, Math.floor(v)))
         }
       }
-      waveformDataRef.current = new Uint8Array(dataArray)
+      const silenceThreshold = 10
+      const normalizedSpectrum = normalizeSpectrum(dataArray, silenceThreshold)
+      const renderData = normalizedSpectrum.length > 0 ? normalizedSpectrum : new Uint8Array([0])
+      const renderLength = renderData.length
 
-      const avg = dataArray.reduce((sum, value) => sum + value, 0) / bufferLength
+      waveformDataRef.current = new Uint8Array(renderData)
+
+      const avg = renderLength > 0
+        ? renderData.reduce((sum, value) => sum + value, 0) / renderLength
+        : 0
       const pulse = avg / 255
 
       // Multicolor gradient background based on audio
@@ -698,16 +728,17 @@ function App() {
       ctx.fillStyle = gradient
       ctx.fillRect(0, 0, visualWidth, visualHeight)
 
-      // Use all frequency data for maximum reactivity
-      const barCount = bufferLength
-      const barWidth = visualWidth / barCount
+      // Stretch the normalized active spectrum to 100% canvas width
+      const barCount = renderLength
+      const minBarHeight = 2
       
       for (let i = 0; i < barCount; i += 1) {
-        const dataIndex = i
-        const barPosition = i * barWidth
+        const barPosition = Math.round((i * visualWidth) / barCount)
+        const nextBarPosition = Math.round(((i + 1) * visualWidth) / barCount)
+        const barWidth = Math.max(1, nextBarPosition - barPosition)
         
-        const value = dataArray[dataIndex]
-        const barHeight = (value / 255) * visualHeight * 0.6
+        const value = renderData[i] || 0
+        const barHeight = Math.max(minBarHeight, (value / 255) * visualHeight * 0.6)
         
         // Continuous color gradient based on position (hue wave)
         const hueOffset = (i / barCount) * 360
