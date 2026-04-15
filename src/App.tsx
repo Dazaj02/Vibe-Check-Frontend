@@ -1098,10 +1098,36 @@ function App() {
 
   useEffect(() => {
     playlistRef.current = playlist
-    currentIndexRef.current = currentIndex
+    if (playlist.length === 0) {
+      currentIndexRef.current = -1
+      currentPositionRef.current = -1
+      activeIndexRef.current = -1
+      return
+    }
+
+    const stableCursor =
+      currentPositionRef.current >= 0 && currentPositionRef.current < playlist.length
+
+    if (stableCursor) {
+      currentIndexRef.current = currentPositionRef.current
+      if (activeIndexRef.current < 0 || activeIndexRef.current >= playlist.length) {
+        activeIndexRef.current = currentPositionRef.current
+      }
+      return
+    }
+
+    const sourceIndex = resolvePlayingIndexFromAudioElement(playlist)
+    if (sourceIndex >= 0) {
+      currentPositionRef.current = sourceIndex
+      activeIndexRef.current = sourceIndex
+      currentIndexRef.current = sourceIndex
+      return
+    }
+
     if (currentIndex >= 0) {
       currentPositionRef.current = currentIndex
       activeIndexRef.current = currentIndex
+      currentIndexRef.current = currentIndex
     }
   }, [playlist, currentIndex])
 
