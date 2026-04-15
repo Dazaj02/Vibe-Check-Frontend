@@ -18,7 +18,12 @@ type PlaylistState = {
   playlistName?: string | null
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api'
+const rawApiBase = (import.meta.env.VITE_API_URL as string | undefined)?.trim()
+const API_BASE = (() => {
+  if (!rawApiBase) return '/api'
+  const normalized = rawApiBase.replace(/\/+$/, '')
+  return normalized.endsWith('/api') ? normalized : `${normalized}/api`
+})()
 const ENABLE_AUDIO_ANALYZER = true
 
 const toPlayableUrl = (audioUrl: string) => {
