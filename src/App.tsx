@@ -357,14 +357,18 @@ function App() {
       setCurrentTime(0)
       setIsPlaying(false)
       setMessage(`Loading: ${song.title}...`)
-
-      await audio.play()
+      
+      const playPromise = audio.play()
+      if (playPromise !== undefined) {
+        await playPromise
+      }
 
       // Ignore outdated async completions
       if (requestId !== playRequestIdRef.current) {
         return
       }
 
+      setIsPlaying(true)
       setMessage('Playback running')
       if (!rafRef.current) {
         animateBackground()
